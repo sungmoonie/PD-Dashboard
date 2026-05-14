@@ -57,19 +57,81 @@
 
 ## 3. 실행 방법
 
+### 요구 사항
+
+- **Python 3.9 이상** (Python 버전 확인: `python3 --version`)
+- pip (Python 패키지 관리자)
+
+### Step 1. 저장소 클론
+
 ```bash
-# 1. 패키지 설치
-pip3 install -r requirements.txt
-
-# 2. 데모 데이터 생성 (최초 1회)
-python3 generate_demo_data.py
-
-# 3. 대시보드 실행
-python3 app.py
-
-# 4. 브라우저에서 접속
-# http://127.0.0.1:8050/
+git clone https://github.com/sungmoonie/visual-consensus-dashboard.git
+cd visual-consensus-dashboard
 ```
+
+### Step 2. 가상환경 생성 (권장)
+
+프로젝트별 패키지 충돌을 방지하기 위해 가상환경 사용을 권장합니다.
+
+```bash
+# 가상환경 생성
+python3 -m venv venv
+
+# 가상환경 활성화
+# macOS / Linux:
+source venv/bin/activate
+
+# Windows (PowerShell):
+.\venv\Scripts\Activate.ps1
+
+# Windows (CMD):
+.\venv\Scripts\activate.bat
+```
+
+> 활성화되면 터미널 앞에 `(venv)`가 표시됩니다.
+
+### Step 3. 패키지 설치
+
+```bash
+pip install -r requirements.txt
+```
+
+### Step 4. 데모 데이터 생성 (최초 1회)
+
+```bash
+python3 generate_demo_data.py
+```
+
+> `data/` 폴더에 CSV/JSON 파일이 생성됩니다. 이미 생성한 경우 이 단계를 건너뛰어도 됩니다.
+
+### Step 5. 대시보드 실행
+
+```bash
+python3 app.py
+```
+
+실행에 성공하면 아래와 같은 메시지가 출력됩니다:
+
+```
+Dash is running on http://127.0.0.1:8050/
+```
+
+### Step 6. 브라우저에서 접속
+
+브라우저를 열고 아래 주소로 접속합니다:
+
+👉 **http://127.0.0.1:8050/**
+
+> 종료하려면 터미널에서 `Ctrl + C`를 누르세요.
+
+### 문제 해결 (Troubleshooting)
+
+| 증상 | 원인 | 해결 방법 |
+|------|------|----------|
+| `command not found: python` | macOS/Linux에서는 `python3`이 기본 | `python` 대신 `python3` 사용 |
+| `Address already in use (Port 8050)` | 이전 실행이 아직 종료되지 않음 | `lsof -i :8050`으로 PID 확인 후 `kill <PID>` |
+| `ModuleNotFoundError` | 패키지 미설치 또는 가상환경 미활성화 | `pip install -r requirements.txt` 재실행, 가상환경 활성화 확인 |
+| `No such file or directory: data/...` | 데모 데이터 미생성 | `python3 generate_demo_data.py` 실행 |
 
 ---
 
