@@ -1,0 +1,32 @@
+﻿data_numbering,UPDRS_name,label_clinician1,label_clinician2,label_clinician3
+11,Facial expression,2,2,3
+11,Finger tapping - Right hand,2,2,2
+11,Finger tapping - Left hand,2,1,2
+11,Hand movements - Right hand,3,3,2
+11,Hand movements - Left hand,3,2,2
+11,Pronation-supination - Right hand,2,2,2
+11,Pronation-supination - Left hand,1,2,2
+11,Toe tapping - Right foot,2,2,2
+11,Toe tapping - Left foot,2,1,2
+11,Leg agility - Right leg,1,3,2
+11,Leg agility - Left leg,2,2,1
+11,Arising from chair,0,1,0
+11,Gait,1,2,1
+11,Freezing of gait,0,0,0
+11,Postural stability,0,0,0
+11,Posture,2,2,3
+11,Global spontaneity of movement,1,1,2
+11,Postural tremor - Right hand,2,2,2
+11,Postural tremor - Left hand,2,1,2
+11,Kinetic tremor - Right hand,0,0,1
+11,Kinetic tremor - Left hand,0,0,1
+11,Rest tremor amplitude - RUE,3,3,2
+11,Rest tremor amplitude - LUE,3,2,2
+11,Rest tremor amplitude - RLE,1,0,0
+11,Rest tremor amplitude - LLE,0,0,0
+11,Rest tremor amplitude - Lip/jaw,0,0,0
+11,Constancy of rest tremor,3,2,2
+11,Dyskinesias,Yes,Yes,Yes
+11,Hoehn and Yahr Stage,2,2.5,2.5
+11,wholistic_decision,PD,PD,PD
+,,,,
