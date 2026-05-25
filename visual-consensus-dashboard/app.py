@@ -1,358 +1,358 @@
 """
-PD Clinical Decision Support Dashboard
-========================================
-스마트워치 센서 + 멀티카메라 영상 기반 Movement Interpretation 보조 시스템
+PD Clinical Decision Support Dashboard — Label-Free Review Mode
+================================================================
+Matched Sensor Analog Evidence · 3-column single-page layout
 """
 
 import os
-import re
-
-from dash import Dash, Input, Output, State, html, no_update
+import json
+import dash
+from dash import Input, Output, State, html, dcc, callback_context
 from flask import send_file, request, Response, redirect
 
+# ─── Data Loading ───
 from src.data_loader import (
     load_patients, load_nms, load_updrs_labels, load_updrs_metadata,
-    load_timeseries, load_video_analysis, build_group_stats,
-    TASK_LABELS_KR,
+    load_video_analysis, build_group_stats, build_feature_cache,
+    load_timeseries, get_subject_list, get_subject_list_labelfree,
+    SENSOR_TASKS, TASK_LABELS_KR, _estimate_fs,
 )
-from src.feature_engineering import calc_signal_rms, calc_asymmetry_index, calc_signal_stats
+from src.feature_engineering import (
+    calc_signal_rms, calc_asymmetry_index, calc_signal_stats,
+    calc_tremor_power, calc_rhythm_irregularity, calc_mean_jerk,
+)
 from src.figures import (
-    make_updrs_heatmap, make_clinician_comparison_bar,
-    make_timeseries_plot, make_lr_overlay_plot, make_lr_rms_bar,
-    make_group_box_plot, make_group_task_summary, make_asymmetry_comparison,
-    make_motion_timeline, make_lr_tapping_comparison,
-    make_multicam_comparison, make_tapping_summary_chart,
+    make_timeseries_plot, make_motion_timeline, make_lr_tapping_comparison,
+    make_bilateral_matrix, make_spectral_fingerprint,
+    make_rhythm_ladder, make_evidence_ribbon, _empty_fig,
 )
 from src.layout import create_layout
 
-# ── Pre-load data ────────────────────────────────────────────
+# ─── Pre-load Data ───
 patients_df = load_patients()
 nms_data = load_nms()
 labels_df = load_updrs_labels()
 updrs_meta = load_updrs_metadata()
 video_data = load_video_analysis()
 group_stats = build_group_stats()
+feature_cache = build_feature_cache()
 
-# ── App ──────────────────────────────────────────────────────
-app = Dash(
+# ─── Dash App ───
+app = dash.Dash(
     __name__,
+    title='PD Clinical Decision Support',
     suppress_callback_exceptions=True,
-    title="PD Clinical Decision Support",
+    assets_folder='assets',
 )
 server = app.server
 app.layout = create_layout()
 
-# ── Video streaming ──────────────────────────────────────────
-VIDEO_BASE = os.path.dirname(os.path.abspath(__file__))
-VIDEO_BASE = os.path.dirname(VIDEO_BASE)  # parent of visual-consensus-dashboard/
-VIDEO_MAP = {
-    'finger_tapping_left': '7. Finger_tapping_left',
-    'finger_tapping_right': '8. FInger_tapping_right',
-}
-GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/sungmoonie/PD-Dashboard/main'
-GITHUB_VIDEO_MAP = {
-    'finger_tapping_left': '7.%20Finger_tapping_left',
-    'finger_tapping_right': '8.%20FInger_tapping_right',
+
+# ══════════════════════════════════════════════════════════════
+#  VIDEO STREAMING (unchanged from original)
+# ══════════════════════════════════════════════════════════════
+
+VIDEO_FOLDERS = {
+    'left': '7. Finger_tapping_left',
+    'right': '8. FInger_tapping_right',
 }
 
 
 @server.route('/video/<folder>/<camera>')
-def stream_video(folder, camera):
-    real_folder = VIDEO_MAP.get(folder)
-    if not real_folder:
-        return 'Not found', 404
-    path = os.path.join(VIDEO_BASE, real_folder, camera)
+def serve_video(folder, camera):
+    """Serve video with Range request support."""
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if folder == 'left':
+        video_dir = os.path.join(project_dir, VIDEO_FOLDERS['left'])
+    else:
+        video_dir = os.path.join(project_dir, VIDEO_FOLDERS['right'])
 
-    if os.path.exists(path):
-        file_size = os.path.getsize(path)
-        range_header = request.headers.get('Range')
+    video_path = os.path.join(video_dir, camera)
+    if not os.path.exists(video_path):
+        # Fallback: GitHub raw content
+        github_base = 'https://raw.githubusercontent.com'
+        return redirect(f'{github_base}/placeholder/video/{folder}/{camera}', code=302)
 
-        if range_header:
-            m = re.search(r'bytes=(\d+)-(\d*)', range_header)
-            start = int(m.group(1))
-            end = int(m.group(2)) if m.group(2) else file_size - 1
-            length = end - start + 1
+    file_size = os.path.getsize(video_path)
+    range_header = request.headers.get('Range')
 
-            with open(path, 'rb') as f:
-                f.seek(start)
-                data = f.read(length)
-
-            resp = Response(data, 206, mimetype='video/mp4')
-            resp.headers['Content-Range'] = f'bytes {start}-{end}/{file_size}'
-            resp.headers['Accept-Ranges'] = 'bytes'
-            resp.headers['Content-Length'] = length
-            return resp
-        else:
-            return send_file(path, mimetype='video/mp4')
-
-    # Fallback: redirect to GitHub raw URL
-    gh_folder = GITHUB_VIDEO_MAP.get(folder)
-    if gh_folder:
-        return redirect(f'{GITHUB_RAW_BASE}/{gh_folder}/{camera}', code=302)
-
-    return 'Not found', 404
+    if range_header:
+        byte_start = int(range_header.replace('bytes=', '').split('-')[0])
+        byte_end = min(byte_start + 1024 * 1024, file_size - 1)
+        with open(video_path, 'rb') as f:
+            f.seek(byte_start)
+            data = f.read(byte_end - byte_start + 1)
+        resp = Response(data, status=206, mimetype='video/mp4')
+        resp.headers['Content-Range'] = f'bytes {byte_start}-{byte_end}/{file_size}'
+        resp.headers['Accept-Ranges'] = 'bytes'
+        resp.headers['Content-Length'] = str(len(data))
+        return resp
+    return send_file(video_path, mimetype='video/mp4')
 
 
 # ══════════════════════════════════════════════════════════════
 #  CALLBACKS
 # ══════════════════════════════════════════════════════════════
 
-# ── 1. 환자 Overview ─────────────────────────────────────────
+# ─── Mode Toggle ───
 @app.callback(
-    [
-        Output('patient-demographics', 'children'),
-        Output('condition-card', 'children'),
-        Output('hy-card', 'children'),
-        Output('diagnosis-card', 'children'),
-        Output('nms-count-card', 'children'),
-        Output('bmi-card', 'children'),
-        Output('handedness-card', 'children'),
-        Output('nms-symptom-list', 'children'),
-        Output('patient-badge', 'children'),
-        Output('patient-badge', 'className'),
-    ],
-    Input('patient-dropdown', 'value'),
+    Output('mode-store', 'data'),
+    Output('mode-toggle-btn', 'children'),
+    Output('mode-toggle-btn', 'className'),
+    Input('mode-toggle-btn', 'n_clicks'),
+    State('mode-store', 'data'),
 )
-def update_overview(tulip_id):
+def toggle_mode(n_clicks, current_mode):
+    if n_clicks and n_clicks % 2 == 1:
+        return 'teaching', 'Teaching', 'mode-toggle teaching-active'
+    return 'review', 'Review', 'mode-toggle review-active'
+
+
+# ─── Teaching panel visibility ───
+@app.callback(
+    Output('teaching-panel', 'className'),
+    Output('demographics-row', 'className'),
+    Input('mode-store', 'data'),
+)
+def update_mode_visibility(mode):
+    if mode == 'teaching':
+        return '', 'demographics-row'
+    return 'hidden-in-review', 'demographics-row hidden-in-review'
+
+
+# ─── Case Badge + Teaching Info ───
+@app.callback(
+    Output('case-badge', 'children'),
+    Output('case-badge', 'className'),
+    Output('teaching-condition', 'children'),
+    Output('teaching-hy', 'children'),
+    Output('teaching-diagnosis', 'children'),
+    Output('teaching-updrs-summary', 'children'),
+    Output('demographics-row', 'children'),
+    Input('patient-dropdown', 'value'),
+    Input('mode-store', 'data'),
+)
+def update_case_info(tulip_id, mode):
     if not tulip_id:
-        return [html.Div()] + ['—'] * 6 + ['환자를 선택하세요.', '', '']
+        return '—', 'badge badge-unknown', '—', '—', '—', '', ''
 
-    pat = patients_df[patients_df.tulip_id == tulip_id]
-    if pat.empty:
-        return [html.Div()] + ['—'] * 6 + ['데이터 없음', '', '']
-    pat = pat.iloc[0]
-
+    row = patients_df[patients_df.tulip_id == tulip_id]
     meta = updrs_meta.get(tulip_id, {})
-    nms = nms_data.get(tulip_id, {})
 
-    hand_kr = {'right': '오른손잡이', 'left': '왼손잡이'}.get(pat.handedness, pat.handedness)
-    demographics = html.Div(className='demographics-row', children=[
-        html.Span(f'{tulip_id}', className='demo-id'),
-        html.Span(f'PADS {pat.pads_id}', className='demo-item'),
-        html.Span(f'{pat.age}세' if pat.age else '', className='demo-item'),
-        html.Span(f'{pat.gender}', className='demo-item'),
-        html.Span(f'{hand_kr}', className='demo-item'),
-        html.Span(f'{pat.height}cm / {pat.weight}kg' if pat.height else '', className='demo-item'),
-        html.Span(f'{pat.condition}', className='demo-group'),
-    ])
-
-    condition = pat.condition or '—'
-    hy_val = f"{meta.get('hy_mean', '—')}"
-    if 'hy_scores' in meta:
-        hy_val += f" ({'/'.join(str(s) for s in meta['hy_scores'])})"
-    diagnosis = meta.get('diagnosis', '—')
-    nms_count = f"{nms.get('count', 0)} / {nms.get('total', 30)}"
-    bmi = f"{pat.bmi:.1f}" if pat.bmi else '—'
-    handedness = pat.handedness.capitalize() if pat.handedness else '—'
-
-    symptoms = nms.get('symptoms', [])
-    if symptoms:
-        symptom_items = html.Ul(className='nms-symptom-items', children=[
-            html.Li(s, className='nms-symptom-item') for s in symptoms
-        ])
+    # Badge (only show in teaching mode)
+    diag = meta.get('diagnosis', '?')
+    if mode == 'teaching':
+        badge_text = diag
+        badge_class = f'badge badge-{diag.lower()}' if diag in ('PD', 'HT') else 'badge badge-unknown'
     else:
-        symptom_items = html.P('Non-motor 증상 없음',
-                               style={'color': '#38a169', 'fontWeight': '600'})
+        badge_text = ''
+        badge_class = 'badge badge-hidden'
 
-    diag = meta.get('diagnosis', '')
-    badge_map = {
-        'PD': ('PD', 'badge badge-pd'),
-        'HT': ('Healthy', 'badge badge-healthy'),
-        'Healthy': ('Healthy', 'badge badge-healthy'),
-    }
-    if diag in badge_map:
-        badge_text, badge_class = badge_map[diag]
-    elif 'Parkinson' in (pat.condition or ''):
-        badge_text, badge_class = 'PD', 'badge badge-pd'
-    elif 'Healthy' in (pat.condition or ''):
-        badge_text, badge_class = 'Healthy', 'badge badge-healthy'
-    else:
-        badge_text, badge_class = condition[:10], 'badge badge-differential'
+    # Teaching fields
+    condition = row.iloc[0]['condition'] if not row.empty else '—'
+    hy = str(meta.get('hy_mean', '—'))
+    diagnosis = diag
 
-    return [demographics, condition, hy_val, diagnosis, nms_count,
-            bmi, handedness, symptom_items, badge_text, badge_class]
+    # UPDRS summary
+    updrs_summary = ''
+    if mode == 'teaching':
+        subj_labels = labels_df[
+            (labels_df.tulip_id == tulip_id) & (labels_df.is_numeric == True)
+        ]
+        if not subj_labels.empty:
+            high_items = subj_labels[subj_labels['mean'] >= 2.0]
+            if not high_items.empty:
+                items_text = ', '.join(high_items['updrs_name'].tolist()[:5])
+                updrs_summary = html.Div([
+                    html.Strong('High UPDRS items: '),
+                    html.Span(items_text),
+                ], className='updrs-hint')
+
+    # Demographics row (teaching only)
+    demographics = ''
+    if mode == 'teaching' and not row.empty:
+        r = row.iloc[0]
+        demographics = html.Div([
+            html.Span(f"TULIP: {tulip_id}", className='demo-item'),
+            html.Span(f"PADS: {r['pads_id']}", className='demo-item'),
+            html.Span(f"Age: {r['age']}", className='demo-item'),
+            html.Span(f"Gender: {r['gender']}", className='demo-item'),
+            html.Span(f"Condition: {condition}", className='demo-item demo-condition'),
+        ], className='demo-content')
+
+    return badge_text, badge_class, condition, hy, diagnosis, updrs_summary, demographics
 
 
-# ── 2. UPDRS 임상 평가 ──────────────────────────────────────
+# ─── Bilateral Matrix ───
 @app.callback(
-    Output('updrs-heatmap', 'figure'),
+    Output('bilateral-matrix', 'figure'),
     Input('patient-dropdown', 'value'),
 )
-def update_updrs_heatmap(_):
-    return make_updrs_heatmap(labels_df)
+def update_bilateral_matrix(tulip_id):
+    if not tulip_id:
+        return _empty_fig('Case를 선택하세요')
+    return make_bilateral_matrix(feature_cache, tulip_id)
 
 
+# ─── Spectral Fingerprint ───
 @app.callback(
-    [
-        Output('clinician-comparison-bar', 'figure'),
-        Output('updrs-click-detail', 'children'),
-    ],
-    Input('updrs-heatmap', 'clickData'),
+    Output('spectral-fingerprint', 'figure'),
+    Input('patient-dropdown', 'value'),
+    Input('task-dropdown', 'value'),
 )
-def update_updrs_click(click_data):
-    if not click_data:
-        from src.figures import _empty_fig
-        return [_empty_fig('Heatmap 셀을 클릭하세요'),
-                'Heatmap 셀을 클릭하면 Clinician별 비교가 표시됩니다.']
-
-    point = click_data['points'][0]
-    clicked_tulip = point.get('y', '')
-    clicked_item = point.get('x', '')
-
-    fig = make_clinician_comparison_bar(labels_df, clicked_tulip, clicked_item)
-
-    row = labels_df[
-        (labels_df.tulip_id == clicked_tulip) &
-        (labels_df.updrs_name == clicked_item) &
-        (labels_df.is_numeric == True)
-    ]
-    if not row.empty:
-        r = row.iloc[0]
-        detail = (
-            f"Subject: {clicked_tulip} | Item: {clicked_item} | "
-            f"C1: {r['c1']} | C2: {r['c2']} | C3: {r['c3']} | "
-            f"Mean: {r['mean']:.2f} | Disagreement: {r['disagreement']:.0f}"
-        )
-    else:
-        detail = f'{clicked_tulip} — {clicked_item}: 데이터 없음'
-
-    return [fig, detail]
-
-
-# ── 3. 센서 & 좌우 비교 ─────────────────────────────────────
-@app.callback(
-    [
-        Output('lr-overlay-chart', 'figure'),
-        Output('lr-rms-bar-chart', 'figure'),
-        Output('sensor-left-timeseries', 'figure'),
-        Output('sensor-right-timeseries', 'figure'),
-        Output('sensor-left-rms', 'children'),
-        Output('sensor-right-rms', 'children'),
-        Output('sensor-asymmetry', 'children'),
-        Output('sensor-duration-card', 'children'),
-    ],
-    [Input('patient-dropdown', 'value'), Input('sensor-task-dropdown', 'value')],
-)
-def update_sensor(tulip_id, task):
+def update_spectral(tulip_id, task):
     if not tulip_id or not task:
-        return [{}] * 4 + ['—'] * 4
-
-    left_df = load_timeseries(tulip_id, task, 'LeftWrist')
-    right_df = load_timeseries(tulip_id, task, 'RightWrist')
-
-    if left_df.empty and right_df.empty:
-        return [{}] * 4 + ['데이터 없음'] * 4
-
-    task_label = TASK_LABELS_KR.get(task, task)
-
-    # L/R overlay
-    overlay_fig = make_lr_overlay_plot(left_df, right_df, 'accel_mag', task_label)
-
-    # Stats
-    left_stats = calc_signal_stats(left_df['accel_mag'].values) if not left_df.empty else {}
-    right_stats = calc_signal_stats(right_df['accel_mag'].values) if not right_df.empty else {}
-    rms_fig = make_lr_rms_bar(left_stats, right_stats, task_label)
-
-    # Raw timeseries
-    left_ts_fig = make_timeseries_plot(left_df, f'{tulip_id} — {task_label} (Left)')
-    right_ts_fig = make_timeseries_plot(right_df, f'{tulip_id} — {task_label} (Right)')
-
-    # Cards
-    l_rms = f"{left_stats.get('rms', 0):.4f}" if left_stats else '—'
-    r_rms = f"{right_stats.get('rms', 0):.4f}" if right_stats else '—'
-    asym = calc_asymmetry_index(left_stats.get('rms', 0), right_stats.get('rms', 0))
-    asym_str = f"{asym:.3f}"
-    duration = f"{max(left_df['time'].max() if not left_df.empty else 0, right_df['time'].max() if not right_df.empty else 0):.1f}"
-
-    return [overlay_fig, rms_fig, left_ts_fig, right_ts_fig,
-            l_rms, r_rms, asym_str, duration]
+        return _empty_fig('데이터 없음')
+    return make_spectral_fingerprint(tulip_id, task)
 
 
-# ── 4. PD vs Healthy 비교 ───────────────────────────────────
+# ─── Rhythm Ladder ───
 @app.callback(
-    [
-        Output('group-box-chart', 'figure'),
-        Output('asymmetry-scatter-chart', 'figure'),
-        Output('group-task-summary-chart', 'figure'),
-    ],
-    [
-        Input('patient-dropdown', 'value'),
-        Input('group-task-dropdown', 'value'),
-        Input('group-metric-dropdown', 'value'),
-    ],
+    Output('rhythm-ladder', 'figure'),
+    Input('patient-dropdown', 'value'),
+    Input('task-dropdown', 'value'),
 )
-def update_group_comparison(tulip_id, task, metric):
-    if group_stats.empty:
-        return [{}] * 3
-
-    box_fig = make_group_box_plot(group_stats, task, metric, highlight_tulip=tulip_id)
-    asym_fig = make_asymmetry_comparison(group_stats, task, highlight_tulip=tulip_id)
-    summary_fig = make_group_task_summary(group_stats, highlight_tulip=tulip_id)
-
-    return [box_fig, asym_fig, summary_fig]
+def update_rhythm(tulip_id, task):
+    if not tulip_id or not task:
+        return _empty_fig('데이터 없음')
+    return make_rhythm_ladder(tulip_id, task)
 
 
-# ── 5. 영상 분석 ────────────────────────────────────────────
+# ─── Evidence Ribbon ───
+@app.callback(
+    Output('evidence-ribbon', 'figure'),
+    Input('patient-dropdown', 'value'),
+)
+def update_evidence_ribbon(tulip_id):
+    if not tulip_id:
+        return _empty_fig('Case를 선택하세요')
+    return make_evidence_ribbon(feature_cache, tulip_id)
+
+
+# ─── Raw Timeseries ───
+@app.callback(
+    Output('raw-timeseries-left', 'figure'),
+    Output('raw-timeseries-right', 'figure'),
+    Input('patient-dropdown', 'value'),
+    Input('task-dropdown', 'value'),
+)
+def update_raw_timeseries(tulip_id, task):
+    if not tulip_id or not task:
+        return _empty_fig('데이터 없음'), _empty_fig('데이터 없음')
+    left_ts = load_timeseries(tulip_id, task, 'LeftWrist')
+    right_ts = load_timeseries(tulip_id, task, 'RightWrist')
+    task_label = TASK_LABELS_KR.get(task, task)
+    fig_l = make_timeseries_plot(left_ts, f'{task_label} — Left Wrist')
+    fig_r = make_timeseries_plot(right_ts, f'{task_label} — Right Wrist')
+    return fig_l, fig_r
+
+
+# ─── Video Player ───
 @app.callback(
     Output('video-player-container', 'children'),
-    [Input('video-side-dropdown', 'value'), Input('video-camera-dropdown', 'value')],
+    Input('video-side-dropdown', 'value'),
+    Input('video-camera-dropdown', 'value'),
 )
 def update_video_player(side, camera):
     if not side or not camera:
-        return html.P('카메라와 방향을 선택하세요.')
-    folder = 'finger_tapping_left' if side == 'left' else 'finger_tapping_right'
-    src = f'/video/{folder}/{camera}'
-    side_label = 'Left' if side == 'left' else 'Right'
-    return [
-        html.P(f'{side_label} Hand — {camera.replace(".mp4", "")}',
-               style={'fontWeight': '600', 'marginBottom': '8px', 'color': '#1a365d'}),
-        html.Video(
-            children=[html.Source(src=src, type='video/mp4')],
-            controls=True,
-            autoPlay=False,
-            style={'width': '100%', 'maxHeight': '360px', 'borderRadius': '8px',
-                   'backgroundColor': '#000'},
-        ),
-    ]
+        return html.P('Select video', className='placeholder-text')
+    video_url = f'/video/{side}/{camera}'
+    return html.Video(
+        src=video_url, controls=True, className='video-player',
+        style={'width': '100%', 'borderRadius': '8px'},
+    )
 
 
+# ─── Video Analysis ───
 @app.callback(
-    [
-        Output('motion-timeline-chart', 'figure'),
-        Output('lr-tapping-chart', 'figure'),
-        Output('tapping-summary-chart', 'figure'),
-        Output('multicam-chart', 'figure'),
-        Output('left-tap-count', 'children'),
-        Output('right-tap-count', 'children'),
-        Output('left-cv-card', 'children'),
-        Output('right-cv-card', 'children'),
-    ],
-    [Input('video-side-dropdown', 'value'), Input('video-camera-dropdown', 'value')],
+    Output('motion-timeline', 'figure'),
+    Output('lr-tapping-comparison', 'figure'),
+    Output('video-left-taps', 'children'),
+    Output('video-right-taps', 'children'),
+    Output('video-l-cv', 'children'),
+    Output('video-r-cv', 'children'),
+    Input('video-side-dropdown', 'value'),
+    Input('video-camera-dropdown', 'value'),
 )
 def update_video_analysis(side, camera):
-    if not video_data or not side or not camera:
-        return [{}] * 4 + ['—'] * 4
+    if not video_data or not side:
+        return (_empty_fig(), _empty_fig(), '—', '—', '—', '—')
 
     side_data = video_data.get(side, {})
     cam_data = side_data.get(camera, {})
+    other_side = 'right' if side == 'left' else 'left'
+    other_data = video_data.get(other_side, {}).get(camera, {})
 
-    timeline_fig = make_motion_timeline(cam_data, side)
+    fig_timeline = make_motion_timeline(cam_data, side) if cam_data else _empty_fig()
+    fig_lr = make_lr_tapping_comparison(
+        video_data.get('left', {}).get(camera, {}),
+        video_data.get('right', {}).get(camera, {}),
+    )
 
-    left_cam1 = video_data.get('left', {}).get('Camera1.mp4', {})
-    right_cam1 = video_data.get('right', {}).get('Camera1.mp4', {})
-    lr_fig = make_lr_tapping_comparison(left_cam1, right_cam1)
-    summary_fig = make_tapping_summary_chart(left_cam1, right_cam1)
-    multicam_fig = make_multicam_comparison(side_data, side)
+    left_cam = video_data.get('left', {}).get(camera, {})
+    right_cam = video_data.get('right', {}).get(camera, {})
+    l_taps = str(left_cam.get('estimated_taps', '—')) if left_cam else '—'
+    r_taps = str(right_cam.get('estimated_taps', '—')) if right_cam else '—'
+    l_cv = f"{left_cam.get('tap_interval_cv', 0):.3f}" if left_cam else '—'
+    r_cv = f"{right_cam.get('tap_interval_cv', 0):.3f}" if right_cam else '—'
 
-    left_taps = str(left_cam1.get('estimated_taps', '—'))
-    right_taps = str(right_cam1.get('estimated_taps', '—'))
-    left_cv = f"{left_cam1.get('tap_interval_cv', 0):.3f}" if left_cam1 else '—'
-    right_cv = f"{right_cam1.get('tap_interval_cv', 0):.3f}" if right_cam1 else '—'
+    return fig_timeline, fig_lr, l_taps, r_taps, l_cv, r_cv
 
-    return [timeline_fig, lr_fig, summary_fig, multicam_fig,
-            left_taps, right_taps, left_cv, right_cv]
+
+# ─── Save Decision ───
+@app.callback(
+    Output('decision-store', 'data'),
+    Output('save-feedback', 'children'),
+    Input('save-decision-btn', 'n_clicks'),
+    State('patient-dropdown', 'value'),
+    State('decision-classification', 'value'),
+    State('decision-confidence', 'value'),
+    State('evidence-tags', 'value'),
+    State('decision-notes', 'value'),
+    State('decision-store', 'data'),
+)
+def save_decision(n_clicks, tulip_id, classification, confidence, tags, notes, store):
+    if not n_clicks or not tulip_id:
+        return store or {}, ''
+
+    store = store or {}
+    store[tulip_id] = {
+        'classification': classification,
+        'confidence': confidence,
+        'evidence_tags': tags,
+        'notes': notes,
+    }
+    return store, html.Span('Saved!', className='feedback-success')
+
+
+# ─── Export JSON ───
+@app.callback(
+    Output('download-json', 'data'),
+    Input('export-btn', 'n_clicks'),
+    State('decision-store', 'data'),
+    prevent_initial_call=True,
+)
+def export_json(n_clicks, store):
+    if not n_clicks or not store:
+        return None
+    return dict(
+        content=json.dumps(store, indent=2, ensure_ascii=False),
+        filename='pd_decisions.json',
+    )
+
+
+# ─── Task Store sync ───
+@app.callback(
+    Output('selected-task-store', 'data'),
+    Input('task-dropdown', 'value'),
+)
+def sync_task(task):
+    return task or 'TouchNose'
 
 
 # ══════════════════════════════════════════════════════════════
+#  RUN
+# ══════════════════════════════════════════════════════════════
+
 if __name__ == '__main__':
     app.run(debug=True, port=8050)

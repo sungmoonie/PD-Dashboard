@@ -248,6 +248,74 @@ def get_task_list():
     ]
 
 
+def get_subject_list_labelfree():
+    """Return dropdown options without condition/diagnosis labels (Review mode)."""
+    patients_df = load_patients()
+    options = []
+    for i, (_, row) in enumerate(patients_df.iterrows(), 1):
+        tid = row['tulip_id']
+        label = f"Case {i:03d} ({row['age']}y, {row['gender']})"
+        options.append({'label': label, 'value': tid})
+    return sorted(options, key=lambda x: x['value'])
+
+
+@lru_cache(maxsize=1)
+def build_feature_cache():
+    """Precompute 5 features per subject/task/wrist → DataFrame.
+
+    Columns: tulip_id, task, wrist, tremor_power, amplitude(accel_rms),
+             rhythm_irreg, jerk, asymmetry
+    """
+    from src.feature_engineering import (
+        calc_tremor_power, calc_rhythm_irregularity, calc_mean_jerk, calc_signal_rms
+    )
+    patients = load_patients()
+    rows = []
+    for tulip_id in patients['tulip_id']:
+        for task in SENSOR_TASKS:
+            left_rms = 0.0
+            right_rms = 0.0
+            for wrist in ['LeftWrist', 'RightWrist']:
+                ts = load_timeseries(tulip_id, task, wrist)
+                if ts.empty:
+                    continue
+                sig = ts['accel_mag'].values
+                fs = _estimate_fs(ts)
+                rms = calc_signal_rms(sig)
+                if wrist == 'LeftWrist':
+                    left_rms = rms
+                else:
+                    right_rms = rms
+                rows.append({
+                    'tulip_id': tulip_id,
+                    'task': task,
+                    'wrist': 'L' if wrist == 'LeftWrist' else 'R',
+                    'tremor_power': calc_tremor_power(sig, fs),
+                    'amplitude': rms,
+                    'rhythm_irreg': calc_rhythm_irregularity(sig, fs),
+                    'jerk': calc_mean_jerk(sig, fs),
+                })
+            # Add asymmetry row for the task
+            if left_rms > 0 or right_rms > 0:
+                from src.feature_engineering import calc_asymmetry_index
+                asym = calc_asymmetry_index(left_rms, right_rms)
+                # Tag both rows with asymmetry for this task
+                for r in rows[-2:]:
+                    if r.get('tulip_id') == tulip_id and r.get('task') == task:
+                        r['asymmetry'] = asym
+    return pd.DataFrame(rows)
+
+
+def _estimate_fs(ts_df):
+    """Estimate sampling frequency from timeseries DataFrame."""
+    if len(ts_df) < 2:
+        return 100.0
+    dt = np.median(np.diff(ts_df['time'].values))
+    if dt <= 0:
+        return 100.0
+    return 1.0 / dt
+
+
 @lru_cache(maxsize=1)
 def build_group_stats():
     """Precompute per-subject per-task sensor RMS stats for group comparison.

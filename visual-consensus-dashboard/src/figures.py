@@ -496,3 +496,324 @@ def make_tapping_summary_chart(left_data, right_data):
         font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
     )
     return fig
+
+
+# ══════════════════════════════════════════════════════════════
+#  LABEL-FREE MODE: 4 Core Visualizations
+# ══════════════════════════════════════════════════════════════
+
+FEATURE_LABELS = {
+    'tremor_power': 'Tremor Power',
+    'amplitude': 'Amplitude',
+    'rhythm_irreg': 'Rhythm Irreg.',
+    'jerk': 'Mean Jerk',
+}
+
+
+def make_bilateral_matrix(feature_df, tulip_id):
+    """Task-Symptom Bilateral Matrix: 11 tasks × 8 cols (4 features × L/R).
+
+    Parameters
+    ----------
+    feature_df : DataFrame
+        From build_feature_cache().
+    tulip_id : str
+        Selected subject.
+    """
+    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
+
+    subj = feature_df[feature_df.tulip_id == tulip_id].copy()
+    if subj.empty:
+        return _empty_fig('Feature data 없음')
+
+    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
+    tasks = SENSOR_TASKS
+
+    # Build matrix: tasks × (L_feat1, R_feat1, L_feat2, R_feat2, ...)
+    col_labels = []
+    for f in features:
+        col_labels.append(f'L {FEATURE_LABELS[f]}')
+        col_labels.append(f'R {FEATURE_LABELS[f]}')
+
+    z_matrix = []
+    task_labels = []
+    for task in tasks:
+        task_data = subj[subj.task == task]
+        row = []
+        for f in features:
+            left_val = task_data[task_data.wrist == 'L'][f].values
+            right_val = task_data[task_data.wrist == 'R'][f].values
+            row.append(float(left_val[0]) if len(left_val) > 0 else 0.0)
+            row.append(float(right_val[0]) if len(right_val) > 0 else 0.0)
+        z_matrix.append(row)
+        task_labels.append(TASK_LABELS_KR.get(task, task))
+
+    z_arr = np.array(z_matrix)
+    # Normalize each column for visualization
+    for col_i in range(z_arr.shape[1]):
+        col_max = z_arr[:, col_i].max()
+        if col_max > 0:
+            z_arr[:, col_i] = z_arr[:, col_i] / col_max
+
+    fig = go.Figure(data=go.Heatmap(
+        z=z_arr,
+        x=col_labels,
+        y=task_labels,
+        colorscale='YlOrRd',
+        zmin=0, zmax=1,
+        text=np.round(z_arr, 2).astype(str),
+        texttemplate='%{text}',
+        textfont=dict(size=9),
+        hovertemplate='Task: %{y}<br>Feature: %{x}<br>Normalized: %{z:.3f}<extra></extra>',
+        colorbar=dict(title='Normalized', thickness=12),
+    ))
+    fig.update_layout(
+        title=dict(text='Task-Symptom Bilateral Matrix (Matched Sensor Analog)',
+                   font=dict(size=13)),
+        xaxis=dict(tickangle=-45, tickfont=dict(size=9), side='bottom'),
+        yaxis=dict(tickfont=dict(size=10), autorange='reversed'),
+    )
+    return _apply_defaults(fig, height=max(400, len(tasks) * 35 + 100))
+
+
+def make_spectral_fingerprint(tulip_id, task, load_ts_fn=None):
+    """Bilateral Spectral Fingerprint: L/R spectrogram with 4-12Hz highlight.
+
+    Parameters
+    ----------
+    tulip_id : str
+    task : str
+    load_ts_fn : callable
+        Function to load timeseries (default: data_loader.load_timeseries).
+    """
+    from src.data_loader import load_timeseries, _estimate_fs
+    from src.feature_engineering import compute_stft
+
+    if load_ts_fn is None:
+        load_ts_fn = load_timeseries
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=['Left Spectrogram', 'Right Spectrogram',
+                        'Left PSD', 'Right PSD'],
+        vertical_spacing=0.18, horizontal_spacing=0.1,
+    )
+
+    for col_i, (wrist, color) in enumerate([('LeftWrist', '#4299e1'), ('RightWrist', '#fc8181')], 1):
+        ts = load_ts_fn(tulip_id, task, wrist)
+        if ts.empty:
+            continue
+
+        sig = ts['accel_mag'].values
+        fs = _estimate_fs(ts)
+        times, freqs, mag = compute_stft(sig, fs)
+
+        # Spectrogram heatmap
+        fig.add_trace(go.Heatmap(
+            z=mag[:50, :],  # up to ~25 Hz
+            x=times,
+            y=freqs[:50],
+            colorscale='Viridis',
+            showscale=False,
+            hovertemplate='Time: %{x:.2f}s<br>Freq: %{y:.1f}Hz<br>Mag: %{z:.2f}<extra></extra>',
+        ), row=1, col=col_i)
+
+        # 4-12Hz band highlight
+        fig.add_hrect(y0=4, y1=12, line_width=0,
+                      fillcolor='rgba(229,62,62,0.15)',
+                      row=1, col=col_i)
+
+        # PSD line (mean across time)
+        psd = np.mean(mag ** 2, axis=1)
+        freq_limit = min(50, len(freqs))
+        fig.add_trace(go.Scatter(
+            x=freqs[:freq_limit], y=psd[:freq_limit],
+            mode='lines', line=dict(color=color, width=2),
+            name=f'{"L" if col_i == 1 else "R"} PSD',
+            showlegend=True,
+        ), row=2, col=col_i)
+
+        # Highlight tremor band on PSD
+        tremor_mask = (freqs[:freq_limit] >= 4) & (freqs[:freq_limit] <= 12)
+        tremor_freqs = freqs[:freq_limit][tremor_mask]
+        tremor_psd = psd[:freq_limit][tremor_mask]
+        if len(tremor_freqs) > 0:
+            fig.add_trace(go.Scatter(
+                x=tremor_freqs, y=tremor_psd,
+                mode='lines', fill='tozeroy',
+                fillcolor='rgba(229,62,62,0.2)',
+                line=dict(color='#e53e3e', width=1),
+                name=f'{"L" if col_i == 1 else "R"} 4-12Hz',
+                showlegend=False,
+            ), row=2, col=col_i)
+
+    fig.update_layout(
+        title=dict(text=f'Bilateral Spectral Fingerprint — {task}', font=dict(size=13)),
+        legend=dict(orientation='h', y=-0.1, font=dict(size=10)),
+    )
+    fig.update_yaxes(title_text='Freq (Hz)', row=1, col=1)
+    fig.update_yaxes(title_text='Power', row=2, col=1)
+    fig.update_xaxes(title_text='Time (s)', row=1, col=1)
+    fig.update_xaxes(title_text='Freq (Hz)', row=2, col=1)
+    fig.update_xaxes(title_text='Freq (Hz)', row=2, col=2)
+    return _apply_defaults(fig, height=550)
+
+
+def make_rhythm_ladder(tulip_id, task, load_ts_fn=None):
+    """Rhythm Instability Ladder: waveform + peaks + interval bar chart.
+
+    Parameters
+    ----------
+    tulip_id : str
+    task : str
+    load_ts_fn : callable
+    """
+    from src.data_loader import load_timeseries, _estimate_fs
+    from src.feature_engineering import detect_peaks, calc_rhythm_irregularity
+
+    if load_ts_fn is None:
+        load_ts_fn = load_timeseries
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        subplot_titles=['Waveform + Peak Detection', 'Inter-Peak Intervals'],
+        vertical_spacing=0.2,
+        row_heights=[0.55, 0.45],
+    )
+
+    # Use left wrist by default (dominant side for many tasks)
+    ts = load_ts_fn(tulip_id, task, 'LeftWrist')
+    wrist_label = 'Left'
+    if ts.empty:
+        ts = load_ts_fn(tulip_id, task, 'RightWrist')
+        wrist_label = 'Right'
+    if ts.empty:
+        return _empty_fig('센서 데이터 없음')
+
+    sig = ts['accel_mag'].values
+    time = ts['time'].values
+    fs = _estimate_fs(ts)
+
+    # Detect peaks
+    min_dist = max(int(fs * 0.15), 5)
+    indices, amplitudes = detect_peaks(sig, min_dist=min_dist)
+
+    # Waveform
+    fig.add_trace(go.Scatter(
+        x=time, y=sig, mode='lines',
+        line=dict(color='#2b6cb0', width=1),
+        name='Accel Mag', showlegend=True,
+    ), row=1, col=1)
+
+    # Peak markers
+    if len(indices) > 0:
+        fig.add_trace(go.Scatter(
+            x=time[indices], y=amplitudes,
+            mode='markers',
+            marker=dict(size=8, color='#e53e3e', symbol='diamond'),
+            name=f'Peaks ({len(indices)})',
+        ), row=1, col=1)
+
+    # Interval bar chart
+    if len(indices) >= 2:
+        intervals = np.diff(indices) / fs  # seconds
+        mean_int = np.mean(intervals)
+        std_int = np.std(intervals)
+        cv = std_int / mean_int if mean_int > 0 else 0
+
+        bar_x = list(range(1, len(intervals) + 1))
+        fig.add_trace(go.Bar(
+            x=bar_x, y=intervals,
+            marker=dict(color='#4299e1', opacity=0.7),
+            name='Interval',
+            showlegend=False,
+        ), row=2, col=1)
+
+        # Mean line
+        fig.add_hline(y=mean_int, line_dash='solid', line_color='#e53e3e',
+                      annotation_text=f'Mean: {mean_int:.3f}s',
+                      row=2, col=1)
+        # ±1σ band
+        fig.add_hrect(y0=mean_int - std_int, y1=mean_int + std_int,
+                      fillcolor='rgba(229,62,62,0.1)', line_width=0,
+                      row=2, col=1)
+
+        # CV annotation
+        fig.add_annotation(
+            x=0.95, y=0.95, xref='x2 domain', yref='y2 domain',
+            text=f'CV = {cv:.3f}', showarrow=False,
+            font=dict(size=14, color='#e53e3e'),
+            bgcolor='rgba(255,255,255,0.8)',
+        )
+
+    fig.update_layout(
+        title=dict(text=f'Rhythm Instability — {task} ({wrist_label} Wrist)',
+                   font=dict(size=13)),
+        legend=dict(orientation='h', y=-0.12, font=dict(size=10)),
+    )
+    fig.update_xaxes(title_text='Time (s)', row=1, col=1)
+    fig.update_xaxes(title_text='Interval #', row=2, col=1)
+    fig.update_yaxes(title_text='Accel Mag (g)', row=1, col=1)
+    fig.update_yaxes(title_text='Interval (s)', row=2, col=1)
+    return _apply_defaults(fig, height=520)
+
+
+def make_evidence_ribbon(feature_df, tulip_id):
+    """Side-Aligned Evidence Ribbon: 4 features × 11 tasks, L/R paired bars.
+
+    Parameters
+    ----------
+    feature_df : DataFrame
+        From build_feature_cache().
+    tulip_id : str
+    """
+    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
+
+    subj = feature_df[feature_df.tulip_id == tulip_id].copy()
+    if subj.empty:
+        return _empty_fig('Feature data 없음')
+
+    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
+    tasks = SENSOR_TASKS
+    task_labels = [TASK_LABELS_KR.get(t, t) for t in tasks]
+
+    fig = make_subplots(
+        rows=4, cols=1,
+        subplot_titles=[FEATURE_LABELS[f] for f in features],
+        vertical_spacing=0.08,
+        shared_xaxes=True,
+    )
+
+    for row_i, feat in enumerate(features, 1):
+        left_vals = []
+        right_vals = []
+        for task in tasks:
+            td = subj[subj.task == task]
+            lv = td[td.wrist == 'L'][feat].values
+            rv = td[td.wrist == 'R'][feat].values
+            left_vals.append(float(lv[0]) if len(lv) > 0 else 0)
+            right_vals.append(float(rv[0]) if len(rv) > 0 else 0)
+
+        fig.add_trace(go.Bar(
+            x=task_labels, y=left_vals, name='Left' if row_i == 1 else None,
+            marker=dict(color='#4299e1', opacity=0.8),
+            showlegend=(row_i == 1), legendgroup='left',
+        ), row=row_i, col=1)
+        fig.add_trace(go.Bar(
+            x=task_labels, y=right_vals, name='Right' if row_i == 1 else None,
+            marker=dict(color='#fc8181', opacity=0.8),
+            showlegend=(row_i == 1), legendgroup='right',
+        ), row=row_i, col=1)
+
+    fig.update_layout(
+        title=dict(text='Evidence Ribbon — All Tasks (Matched Sensor Analog)',
+                   font=dict(size=13)),
+        barmode='group',
+        legend=dict(orientation='h', y=-0.05, font=dict(size=11)),
+        height=700,
+        **LAYOUT_DEFAULTS,
+    )
+    fig.update_xaxes(tickangle=-30, tickfont=dict(size=9), row=4, col=1)
+    for i in range(1, 4):
+        fig.update_xaxes(showticklabels=False, row=i, col=1)
+    return fig
