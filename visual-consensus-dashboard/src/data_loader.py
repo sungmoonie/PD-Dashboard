@@ -19,6 +19,20 @@ _SUBJECT_TULIP = {
     12: 'TULIP_012', 13: 'TULIP_013', 14: 'TULIP_014', 15: 'TULIP_015',
 }
 
+# New (unlabeled) cases — these are treated as "new patients" for review
+NEW_CASES = {'TULIP_001', 'TULIP_008'}
+
+
+def get_group_label(tulip_id, condition):
+    """Assign group: New Case / PD / Healthy / Other."""
+    if tulip_id in NEW_CASES:
+        return 'New'
+    if 'Parkinson' in condition:
+        return 'PD'
+    if 'Healthy' in condition:
+        return 'Healthy'
+    return 'Other'
+
 
 def load_mapping():
     """Load TULIP → PADS ID mapping from README_mapping.csv."""
@@ -259,6 +273,21 @@ def get_subject_list_labelfree():
     return sorted(options, key=lambda x: x['value'])
 
 
+def get_subject_list_hybrid():
+    """Return dropdown: New cases label-free, confirmed cases show group."""
+    patients_df = load_patients()
+    options = []
+    for _, row in patients_df.iterrows():
+        tid = row['tulip_id']
+        group = get_group_label(tid, row['condition'])
+        if group == 'New':
+            label = f"★ {tid} — New Patient ({row['age']}y, {row['gender']})"
+        else:
+            label = f"{tid} — {group} ({row['age']}y, {row['gender']})"
+        options.append({'label': label, 'value': tid})
+    return sorted(options, key=lambda x: x['value'])
+
+
 @lru_cache(maxsize=1)
 def build_feature_cache():
     """Precompute 5 features per subject/task/wrist → DataFrame.
@@ -328,13 +357,7 @@ def build_group_stats():
     rows = []
     for tulip_id in patients['tulip_id']:
         condition = cond_map.get(tulip_id, 'Unknown')
-        # Simplify condition to PD / Healthy / Other
-        if "Parkinson" in condition:
-            group = 'PD'
-        elif "Healthy" in condition:
-            group = 'Healthy'
-        else:
-            group = 'Other'
+        group = get_group_label(tulip_id, condition)
         for task in SENSOR_TASKS:
             for wrist in ['LeftWrist', 'RightWrist']:
                 ts = load_timeseries(tulip_id, task, wrist)

@@ -1,8 +1,8 @@
-"""Dashboard layout — single-page 3-column design with Review/Teaching mode."""
+"""Dashboard layout — Hybrid: Tabs + Decision Workspace + Group Comparison."""
 
 from dash import html, dcc
 from src.data_loader import (
-    get_subject_list_labelfree, get_subject_list, get_task_list, SENSOR_TASKS
+    get_subject_list_hybrid, get_task_list, SENSOR_TASKS, NEW_CASES
 )
 
 
@@ -17,25 +17,22 @@ def _card(card_id, label, initial='—'):
 def create_layout():
     """Build the full dashboard layout."""
     task_options = get_task_list()
-    case_options = get_subject_list_labelfree()
+    case_options = get_subject_list_hybrid()
 
     return html.Div([
         # ─── Stores ───
-        dcc.Store(id='mode-store', data='review', storage_type='memory'),
         dcc.Store(id='decision-store', data={}, storage_type='local'),
-        dcc.Store(id='selected-task-store', data='TouchNose'),
-        dcc.Store(id='selected-feature-store', data='tremor_power'),
 
         # ─── Header ───
         html.Header([
             html.Div([
                 html.H1('PD Clinical Decision Support', className='header-title'),
-                html.P('Matched Sensor Analog Evidence · Label-Free Review',
+                html.P('스마트워치 센서 + 멀티카메라 영상 기반 · Movement Interpretation 보조 시스템',
                        className='header-subtitle'),
             ], className='header-left'),
             html.Div([
                 html.Div([
-                    html.Label('Case:', className='header-label'),
+                    html.Label('Patient:', className='header-label'),
                     dcc.Dropdown(
                         id='patient-dropdown',
                         options=case_options,
@@ -44,113 +41,45 @@ def create_layout():
                         clearable=False,
                     ),
                 ], className='header-control'),
-                html.Div([
-                    html.Label('Mode:', className='header-label'),
-                    html.Button('Review', id='mode-toggle-btn',
-                                className='mode-toggle review-active',
-                                n_clicks=0),
-                ], className='header-control'),
                 html.Div(id='case-badge', className='badge badge-unknown'),
             ], className='header-right'),
         ], className='dashboard-header'),
 
-        # ─── Main 3-Column Grid ───
+        # ─── Main Layout: Content + Right Panel ───
         html.Main([
-            # ═══ LEFT: Video Panel ═══
-            html.Aside([
-                html.H3('Video Evidence', className='panel-title'),
-                html.Div([
-                    dcc.Dropdown(
-                        id='video-side-dropdown',
-                        options=[
-                            {'label': 'Left Hand', 'value': 'left'},
-                            {'label': 'Right Hand', 'value': 'right'},
-                        ],
-                        value='left', clearable=False, className='mini-dropdown',
-                    ),
-                    dcc.Dropdown(
-                        id='video-camera-dropdown',
-                        options=[{'label': f'Camera {i}', 'value': f'Camera{i}.mp4'}
-                                 for i in range(1, 7)],
-                        value='Camera1.mp4', clearable=False, className='mini-dropdown',
-                    ),
-                ], className='video-controls'),
-                html.Div(id='video-player-container', className='video-container'),
-                # Section nav for tasks
-                html.H4('Task Navigator', className='section-title'),
-                html.Div([
-                    dcc.Dropdown(
-                        id='task-dropdown',
-                        options=task_options,
-                        value='TouchNose',
-                        clearable=False,
-                        className='task-dropdown',
-                    ),
-                ], className='task-nav'),
-                # Video summary cards
-                html.Div([
-                    _card('video-left-taps', 'L Taps'),
-                    _card('video-right-taps', 'R Taps'),
-                    _card('video-l-cv', 'L Interval CV'),
-                    _card('video-r-cv', 'R Interval CV'),
-                ], className='video-cards-grid'),
-            ], className='left-panel'),
-
-            # ═══ CENTER: Visualizations ═══
+            # ═══ LEFT+CENTER: Tabbed Content ═══
             html.Section([
-                # Demographics row (hidden in review, shown in teaching)
-                html.Div(id='demographics-row', className='demographics-row hidden-in-review'),
+                dcc.Tabs(id='main-tabs', value='tab-overview', className='custom-tabs', children=[
+                    dcc.Tab(label='1. Patient Overview', value='tab-overview',
+                            className='custom-tab', selected_className='custom-tab--selected'),
+                    dcc.Tab(label='2. Group Comparison', value='tab-comparison',
+                            className='custom-tab', selected_className='custom-tab--selected'),
+                    dcc.Tab(label='3. Sensor Analysis', value='tab-sensor',
+                            className='custom-tab', selected_className='custom-tab--selected'),
+                    dcc.Tab(label='4. UPDRS Clinical', value='tab-updrs',
+                            className='custom-tab', selected_className='custom-tab--selected'),
+                    dcc.Tab(label='5. Video Analysis', value='tab-video',
+                            className='custom-tab', selected_className='custom-tab--selected'),
+                ]),
+                html.Div(id='tab-content', className='tab-content-area'),
+            ], className='main-content'),
 
-                # Task-Symptom Bilateral Matrix
-                html.Div([
-                    html.H3('Task-Symptom Bilateral Matrix', className='viz-title'),
-                    dcc.Graph(id='bilateral-matrix', config={'displayModeBar': False}),
-                ], className='viz-block'),
-
-                # Spectral Fingerprint
-                html.Div([
-                    html.H3('Bilateral Spectral Fingerprint', className='viz-title'),
-                    dcc.Graph(id='spectral-fingerprint', config={'displayModeBar': False}),
-                ], className='viz-block'),
-
-                # Rhythm Ladder
-                html.Div([
-                    html.H3('Rhythm Instability Ladder', className='viz-title'),
-                    dcc.Graph(id='rhythm-ladder', config={'displayModeBar': False}),
-                ], className='viz-block'),
-
-                # Evidence Ribbon
-                html.Div([
-                    html.H3('Side-Aligned Evidence Ribbon', className='viz-title'),
-                    dcc.Graph(id='evidence-ribbon', config={'displayModeBar': False}),
-                ], className='viz-block'),
-
-                # Raw sensor toggle (collapsed by default)
-                html.Details([
-                    html.Summary('Raw Sensor Data', className='raw-toggle'),
-                    dcc.Graph(id='raw-timeseries-left',
-                              config={'displayModeBar': False}),
-                    dcc.Graph(id='raw-timeseries-right',
-                              config={'displayModeBar': False}),
-                ], className='raw-sensor-section'),
-
-            ], className='center-panel'),
-
-            # ═══ RIGHT: Decision Workspace ═══
+            # ═══ RIGHT: Decision Workspace (for new patients) ═══
             html.Aside([
                 html.H3('Decision Workspace', className='panel-title'),
+                html.Div(id='new-patient-indicator', className='new-indicator'),
 
-                # Teaching-mode info (hidden in review)
+                # Patient summary cards
                 html.Div([
-                    html.Div([
-                        _card('teaching-condition', 'Condition'),
-                        _card('teaching-hy', 'H&Y Stage'),
-                        _card('teaching-diagnosis', 'Clinician Dx'),
-                    ], className='teaching-cards'),
-                    html.Div(id='teaching-updrs-summary', className='teaching-detail'),
-                ], id='teaching-panel', className='hidden-in-review'),
+                    _card('info-condition', 'Condition'),
+                    _card('info-hy', 'H&Y Stage'),
+                    _card('info-diagnosis', 'Clinician Dx'),
+                    _card('info-nms', 'NMS Count'),
+                ], className='sidebar-cards'),
 
-                # Decision form
+                html.Hr(className='sidebar-divider'),
+
+                # Decision form (for new patients)
                 html.Div([
                     html.H4('Your Assessment', className='section-title'),
                     html.Label('Classification:', className='form-label'),
@@ -196,24 +125,184 @@ def create_layout():
                     html.Button('Save Decision', id='save-decision-btn',
                                 className='btn-primary', n_clicks=0),
                     html.Div(id='save-feedback', className='save-feedback'),
-                ], className='decision-form'),
+                ], id='decision-form-container', className='decision-form'),
 
                 # Export
                 html.Div([
-                    html.Button('Export JSON', id='export-btn',
+                    html.Button('Export All Decisions (JSON)', id='export-btn',
                                 className='btn-secondary', n_clicks=0),
                     dcc.Download(id='download-json'),
                 ], className='export-section'),
-
             ], className='right-panel'),
         ], className='dashboard-grid'),
+    ], className='app-container')
 
-        # ─── Bottom: Video Analysis ───
-        html.Section([
-            html.H3('Video Analysis', className='viz-title'),
+
+# ══════════════════════════════════════════════════════════════
+#  TAB CONTENT BUILDERS
+# ══════════════════════════════════════════════════════════════
+
+def build_tab_overview():
+    """Tab 1: Patient Overview — demographics + NMS."""
+    return html.Div([
+        # Demographics
+        html.Div(id='demographics-row', className='demographics-row'),
+        # Summary cards row
+        html.Div([
+            _card('ov-age', 'Age'),
+            _card('ov-gender', 'Gender'),
+            _card('ov-handedness', 'Handedness'),
+            _card('ov-bmi', 'BMI'),
+            _card('ov-duration', 'Disease Duration'),
+        ], className='summary-cards-row'),
+        # NMS section
+        html.Div([
+            html.H3('Non-Motor Symptoms', className='viz-title'),
+            html.Div(id='nms-content', className='nms-grid'),
+        ], className='viz-block'),
+        # Bilateral Matrix (quick overview)
+        html.Div([
+            html.H3('Task-Symptom Matrix (Sensor Overview)', className='viz-title'),
+            dcc.Graph(id='bilateral-matrix', config={'displayModeBar': False}),
+        ], className='viz-block'),
+    ])
+
+
+def build_tab_comparison():
+    """Tab 2: Group Comparison — New patient vs PD/Healthy confirmed."""
+    task_options = get_task_list()
+    return html.Div([
+        html.Div([
+            html.H3('New Patient vs Confirmed Groups', className='viz-title'),
+            html.P('★ 표시 = New Patient (TULIP_001, TULIP_008). '
+                   '확정된 PD/Healthy 그룹과 비교합니다.',
+                   className='tab-description'),
+        ]),
+        # Controls
+        html.Div([
+            html.Div([
+                html.Label('Task:', className='inline-label'),
+                dcc.Dropdown(id='comp-task-dropdown', options=task_options,
+                             value='TouchNose', clearable=False, className='inline-dropdown'),
+            ], className='inline-control'),
+            html.Div([
+                html.Label('Metric:', className='inline-label'),
+                dcc.Dropdown(id='comp-metric-dropdown', options=[
+                    {'label': 'Accel RMS', 'value': 'accel_rms'},
+                    {'label': 'Gyro RMS', 'value': 'gyro_rms'},
+                    {'label': 'Accel Std', 'value': 'accel_std'},
+                    {'label': 'Gyro Std', 'value': 'gyro_std'},
+                ], value='accel_rms', clearable=False, className='inline-dropdown'),
+            ], className='inline-control'),
+        ], className='controls-row'),
+        # Charts
+        html.Div([
+            dcc.Graph(id='new-vs-group-box', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        html.Div([
+            dcc.Graph(id='task-profile-comparison', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        html.Div([
+            html.Div([
+                dcc.Graph(id='feature-group-comparison', config={'displayModeBar': False}),
+            ], className='chart-half'),
+            html.Div([
+                dcc.Graph(id='asymmetry-scatter', config={'displayModeBar': False}),
+            ], className='chart-half'),
+        ], className='chart-row'),
+    ])
+
+
+def build_tab_sensor():
+    """Tab 3: Sensor Analysis — Spectral + Rhythm + Evidence Ribbon."""
+    task_options = get_task_list()
+    return html.Div([
+        # Task selector
+        html.Div([
+            html.Label('Task:', className='inline-label'),
+            dcc.Dropdown(id='sensor-task-dropdown', options=task_options,
+                         value='TouchNose', clearable=False, className='inline-dropdown'),
+        ], className='controls-row'),
+        # Spectral Fingerprint
+        html.Div([
+            html.H3('Bilateral Spectral Fingerprint', className='viz-title'),
+            dcc.Graph(id='spectral-fingerprint', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        # Rhythm Ladder
+        html.Div([
+            html.H3('Rhythm Instability Ladder', className='viz-title'),
+            dcc.Graph(id='rhythm-ladder', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        # Evidence Ribbon
+        html.Div([
+            html.H3('Evidence Ribbon (All Tasks)', className='viz-title'),
+            dcc.Graph(id='evidence-ribbon', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        # Raw sensor (collapsible)
+        html.Details([
+            html.Summary('Raw 6-Axis Timeseries', className='raw-toggle'),
+            dcc.Graph(id='raw-timeseries-left', config={'displayModeBar': False}),
+            dcc.Graph(id='raw-timeseries-right', config={'displayModeBar': False}),
+        ], className='raw-sensor-section'),
+    ])
+
+
+def build_tab_updrs():
+    """Tab 4: UPDRS Clinical Assessment."""
+    return html.Div([
+        html.Div([
+            html.H3('UPDRS Part III — Clinician Consensus Heatmap', className='viz-title'),
+            html.P('Cell 클릭 → 하단에 3인 Clinician 비교 바 차트 표시',
+                   className='tab-description'),
+            dcc.Graph(id='updrs-heatmap', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        html.Div([
+            dcc.Graph(id='clinician-comparison-bar', config={'displayModeBar': False}),
+            html.Div(id='updrs-detail-text', className='detail-panel'),
+        ], className='viz-block'),
+    ])
+
+
+def build_tab_video():
+    """Tab 5: Video Analysis."""
+    return html.Div([
+        # Controls
+        html.Div([
+            html.Div([
+                html.Label('Side:', className='inline-label'),
+                dcc.Dropdown(
+                    id='video-side-dropdown',
+                    options=[
+                        {'label': 'Left Hand', 'value': 'left'},
+                        {'label': 'Right Hand', 'value': 'right'},
+                    ],
+                    value='left', clearable=False, className='inline-dropdown',
+                ),
+            ], className='inline-control'),
+            html.Div([
+                html.Label('Camera:', className='inline-label'),
+                dcc.Dropdown(
+                    id='video-camera-dropdown',
+                    options=[{'label': f'Camera {i}', 'value': f'Camera{i}.mp4'}
+                             for i in range(1, 7)],
+                    value='Camera1.mp4', clearable=False, className='inline-dropdown',
+                ),
+            ], className='inline-control'),
+        ], className='controls-row'),
+        # Video + analysis side by side
+        html.Div([
+            html.Div([
+                html.Div(id='video-player-container', className='video-container'),
+                html.Div([
+                    _card('video-left-taps', 'L Taps'),
+                    _card('video-right-taps', 'R Taps'),
+                    _card('video-l-cv', 'L Interval CV'),
+                    _card('video-r-cv', 'R Interval CV'),
+                ], className='video-cards-grid'),
+            ], className='video-left'),
             html.Div([
                 dcc.Graph(id='motion-timeline', config={'displayModeBar': False}),
                 dcc.Graph(id='lr-tapping-comparison', config={'displayModeBar': False}),
-            ], className='video-analysis-row'),
-        ], className='bottom-section'),
-    ], className='app-container')
+            ], className='video-right'),
+        ], className='video-split-layout'),
+    ])

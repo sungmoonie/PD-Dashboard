@@ -1,7 +1,7 @@
 """
-PD Clinical Decision Support Dashboard — Label-Free Review Mode
-================================================================
-Matched Sensor Analog Evidence · 3-column single-page layout
+PD Clinical Decision Support Dashboard
+========================================
+Hybrid layout: Tabs + Decision Workspace + New vs Confirmed Group Comparison
 """
 
 import os
@@ -14,19 +14,25 @@ from flask import send_file, request, Response, redirect
 from src.data_loader import (
     load_patients, load_nms, load_updrs_labels, load_updrs_metadata,
     load_video_analysis, build_group_stats, build_feature_cache,
-    load_timeseries, get_subject_list, get_subject_list_labelfree,
-    SENSOR_TASKS, TASK_LABELS_KR, _estimate_fs,
+    load_timeseries, get_subject_list_hybrid,
+    SENSOR_TASKS, TASK_LABELS_KR, NEW_CASES, get_group_label, _estimate_fs,
 )
 from src.feature_engineering import (
     calc_signal_rms, calc_asymmetry_index, calc_signal_stats,
-    calc_tremor_power, calc_rhythm_irregularity, calc_mean_jerk,
 )
 from src.figures import (
-    make_timeseries_plot, make_motion_timeline, make_lr_tapping_comparison,
+    make_timeseries_plot, make_updrs_heatmap, make_clinician_comparison_bar,
+    make_motion_timeline, make_lr_tapping_comparison,
     make_bilateral_matrix, make_spectral_fingerprint,
-    make_rhythm_ladder, make_evidence_ribbon, _empty_fig,
+    make_rhythm_ladder, make_evidence_ribbon,
+    make_new_vs_group_box, make_group_feature_comparison,
+    make_task_profile_comparison, make_asymmetry_scatter,
+    _empty_fig,
 )
-from src.layout import create_layout
+from src.layout import (
+    create_layout, build_tab_overview, build_tab_comparison,
+    build_tab_sensor, build_tab_updrs, build_tab_video,
+)
 
 # ─── Pre-load Data ───
 patients_df = load_patients()
@@ -49,7 +55,7 @@ app.layout = create_layout()
 
 
 # ══════════════════════════════════════════════════════════════
-#  VIDEO STREAMING (unchanged from original)
+#  VIDEO STREAMING
 # ══════════════════════════════════════════════════════════════
 
 VIDEO_FOLDERS = {
@@ -69,7 +75,6 @@ def serve_video(folder, camera):
 
     video_path = os.path.join(video_dir, camera)
     if not os.path.exists(video_path):
-        # Fallback: GitHub raw content
         github_base = 'https://raw.githubusercontent.com'
         return redirect(f'{github_base}/placeholder/video/{folder}/{camera}', code=302)
 
@@ -92,179 +97,218 @@ def serve_video(folder, camera):
 
 # ══════════════════════════════════════════════════════════════
 #  CALLBACKS
-# ══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════��══════
 
-# ─── Mode Toggle ───
+# ─── Tab Rendering ───
 @app.callback(
-    Output('mode-store', 'data'),
-    Output('mode-toggle-btn', 'children'),
-    Output('mode-toggle-btn', 'className'),
-    Input('mode-toggle-btn', 'n_clicks'),
-    State('mode-store', 'data'),
+    Output('tab-content', 'children'),
+    Input('main-tabs', 'value'),
 )
-def toggle_mode(n_clicks, current_mode):
-    if n_clicks and n_clicks % 2 == 1:
-        return 'teaching', 'Teaching', 'mode-toggle teaching-active'
-    return 'review', 'Review', 'mode-toggle review-active'
+def render_tab(tab):
+    if tab == 'tab-overview':
+        return build_tab_overview()
+    elif tab == 'tab-comparison':
+        return build_tab_comparison()
+    elif tab == 'tab-sensor':
+        return build_tab_sensor()
+    elif tab == 'tab-updrs':
+        return build_tab_updrs()
+    elif tab == 'tab-video':
+        return build_tab_video()
+    return html.Div('Select a tab')
 
 
-# ─── Teaching panel visibility ───
-@app.callback(
-    Output('teaching-panel', 'className'),
-    Output('demographics-row', 'className'),
-    Input('mode-store', 'data'),
-)
-def update_mode_visibility(mode):
-    if mode == 'teaching':
-        return '', 'demographics-row'
-    return 'hidden-in-review', 'demographics-row hidden-in-review'
-
-
-# ─── Case Badge + Teaching Info ───
+# ─── Case Badge + Right Panel Info ───
 @app.callback(
     Output('case-badge', 'children'),
     Output('case-badge', 'className'),
-    Output('teaching-condition', 'children'),
-    Output('teaching-hy', 'children'),
-    Output('teaching-diagnosis', 'children'),
-    Output('teaching-updrs-summary', 'children'),
-    Output('demographics-row', 'children'),
+    Output('info-condition', 'children'),
+    Output('info-hy', 'children'),
+    Output('info-diagnosis', 'children'),
+    Output('info-nms', 'children'),
+    Output('new-patient-indicator', 'children'),
     Input('patient-dropdown', 'value'),
-    Input('mode-store', 'data'),
 )
-def update_case_info(tulip_id, mode):
+def update_case_info(tulip_id):
     if not tulip_id:
-        return '—', 'badge badge-unknown', '—', '—', '—', '', ''
+        return '—', 'badge badge-unknown', '—', '—', '—', '—', ''
 
     row = patients_df[patients_df.tulip_id == tulip_id]
     meta = updrs_meta.get(tulip_id, {})
+    is_new = tulip_id in NEW_CASES
 
-    # Badge (only show in teaching mode)
-    diag = meta.get('diagnosis', '?')
-    if mode == 'teaching':
-        badge_text = diag
-        badge_class = f'badge badge-{diag.lower()}' if diag in ('PD', 'HT') else 'badge badge-unknown'
+    # Badge
+    if is_new:
+        badge_text = '★ NEW'
+        badge_class = 'badge badge-new'
     else:
-        badge_text = ''
-        badge_class = 'badge badge-hidden'
+        condition = row.iloc[0]['condition'] if not row.empty else 'Unknown'
+        group = get_group_label(tulip_id, condition)
+        badge_text = group
+        badge_class = f'badge badge-{group.lower()}'
 
-    # Teaching fields
+    # Info cards
     condition = row.iloc[0]['condition'] if not row.empty else '—'
+    if is_new:
+        condition = '미확정 (New Case)'
+
     hy = str(meta.get('hy_mean', '—'))
-    diagnosis = diag
+    diag = meta.get('diagnosis', '—')
+    if is_new:
+        diag = '판단 필요'
 
-    # UPDRS summary
-    updrs_summary = ''
-    if mode == 'teaching':
-        subj_labels = labels_df[
-            (labels_df.tulip_id == tulip_id) & (labels_df.is_numeric == True)
-        ]
-        if not subj_labels.empty:
-            high_items = subj_labels[subj_labels['mean'] >= 2.0]
-            if not high_items.empty:
-                items_text = ', '.join(high_items['updrs_name'].tolist()[:5])
-                updrs_summary = html.Div([
-                    html.Strong('High UPDRS items: '),
-                    html.Span(items_text),
-                ], className='updrs-hint')
+    nms_count = str(nms_data.get(tulip_id, {}).get('count', '—'))
 
-    # Demographics row (teaching only)
-    demographics = ''
-    if mode == 'teaching' and not row.empty:
-        r = row.iloc[0]
-        demographics = html.Div([
-            html.Span(f"TULIP: {tulip_id}", className='demo-item'),
-            html.Span(f"PADS: {r['pads_id']}", className='demo-item'),
-            html.Span(f"Age: {r['age']}", className='demo-item'),
-            html.Span(f"Gender: {r['gender']}", className='demo-item'),
-            html.Span(f"Condition: {condition}", className='demo-item demo-condition'),
-        ], className='demo-content')
+    # New patient indicator
+    indicator = ''
+    if is_new:
+        indicator = html.Div([
+            html.Span('★ ', className='new-star'),
+            html.Span('이 환자는 미확정 New Case입니다. '),
+            html.Span('아래에서 PD/HT/? 판단을 내려주세요.'),
+        ], className='new-case-alert')
 
-    return badge_text, badge_class, condition, hy, diagnosis, updrs_summary, demographics
+    return badge_text, badge_class, condition, hy, diag, nms_count, indicator
 
 
-# ─── Bilateral Matrix ───
+# ─── Tab 1: Patient Overview ───
 @app.callback(
+    Output('demographics-row', 'children'),
+    Output('ov-age', 'children'),
+    Output('ov-gender', 'children'),
+    Output('ov-handedness', 'children'),
+    Output('ov-bmi', 'children'),
+    Output('ov-duration', 'children'),
+    Output('nms-content', 'children'),
     Output('bilateral-matrix', 'figure'),
     Input('patient-dropdown', 'value'),
 )
-def update_bilateral_matrix(tulip_id):
+def update_overview(tulip_id):
+    empty = ('', '—', '—', '—', '—', '—', '', _empty_fig())
     if not tulip_id:
-        return _empty_fig('Case를 선택하세요')
-    return make_bilateral_matrix(feature_cache, tulip_id)
+        return empty
+
+    row = patients_df[patients_df.tulip_id == tulip_id]
+    if row.empty:
+        return empty
+    r = row.iloc[0]
+
+    is_new = tulip_id in NEW_CASES
+    cond_display = '★ New Case (미확정)' if is_new else r['condition']
+
+    demographics = html.Div([
+        html.Span(f"TULIP: {tulip_id}", className='demo-item demo-id'),
+        html.Span(f"PADS: {r['pads_id']}", className='demo-item'),
+        html.Span(f"Condition: {cond_display}",
+                  className='demo-item demo-condition' + (' demo-new' if is_new else '')),
+    ], className='demo-content')
+
+    # NMS
+    nms = nms_data.get(tulip_id, {})
+    symptoms = nms.get('symptoms', [])
+    nms_content = html.Div([
+        html.Div([
+            html.Span(f'• {s}', className='nms-symptom-item')
+            for s in symptoms
+        ], className='nms-list') if symptoms else html.P('No NMS reported')
+    ])
+
+    # Matrix
+    fig_matrix = make_bilateral_matrix(feature_cache, tulip_id)
+
+    age_diag = r.get('age_at_diagnosis')
+    duration = f"{r['age'] - age_diag}y" if age_diag and r['age'] else '—'
+
+    return (demographics, str(r['age'] or '—'), r['gender'] or '—',
+            r['handedness'] or '—', str(r['bmi'] or '—'), duration,
+            nms_content, fig_matrix)
 
 
-# ─── Spectral Fingerprint ───
+# ─── Tab 2: Group Comparison ───
+@app.callback(
+    Output('new-vs-group-box', 'figure'),
+    Output('task-profile-comparison', 'figure'),
+    Output('feature-group-comparison', 'figure'),
+    Output('asymmetry-scatter', 'figure'),
+    Input('patient-dropdown', 'value'),
+    Input('comp-task-dropdown', 'value'),
+    Input('comp-metric-dropdown', 'value'),
+)
+def update_comparison(tulip_id, task, metric):
+    if not tulip_id or not task:
+        return (_empty_fig(), _empty_fig(), _empty_fig(), _empty_fig())
+
+    fig_box = make_new_vs_group_box(group_stats, task, metric, tulip_id)
+    fig_profile = make_task_profile_comparison(group_stats, tulip_id)
+    fig_features = make_group_feature_comparison(feature_cache, group_stats, tulip_id)
+    fig_asym = make_asymmetry_scatter(group_stats, task, tulip_id)
+
+    return fig_box, fig_profile, fig_features, fig_asym
+
+
+# ─── Tab 3: Sensor Analysis ───
 @app.callback(
     Output('spectral-fingerprint', 'figure'),
-    Input('patient-dropdown', 'value'),
-    Input('task-dropdown', 'value'),
-)
-def update_spectral(tulip_id, task):
-    if not tulip_id or not task:
-        return _empty_fig('데이터 없음')
-    return make_spectral_fingerprint(tulip_id, task)
-
-
-# ─── Rhythm Ladder ───
-@app.callback(
     Output('rhythm-ladder', 'figure'),
-    Input('patient-dropdown', 'value'),
-    Input('task-dropdown', 'value'),
-)
-def update_rhythm(tulip_id, task):
-    if not tulip_id or not task:
-        return _empty_fig('데이터 없음')
-    return make_rhythm_ladder(tulip_id, task)
-
-
-# ─── Evidence Ribbon ───
-@app.callback(
     Output('evidence-ribbon', 'figure'),
-    Input('patient-dropdown', 'value'),
-)
-def update_evidence_ribbon(tulip_id):
-    if not tulip_id:
-        return _empty_fig('Case를 선택하세요')
-    return make_evidence_ribbon(feature_cache, tulip_id)
-
-
-# ─── Raw Timeseries ───
-@app.callback(
     Output('raw-timeseries-left', 'figure'),
     Output('raw-timeseries-right', 'figure'),
     Input('patient-dropdown', 'value'),
-    Input('task-dropdown', 'value'),
+    Input('sensor-task-dropdown', 'value'),
 )
-def update_raw_timeseries(tulip_id, task):
+def update_sensor(tulip_id, task):
+    empty = (_empty_fig(),) * 5
     if not tulip_id or not task:
-        return _empty_fig('데이터 없음'), _empty_fig('데이터 없음')
+        return empty
+
+    fig_spectral = make_spectral_fingerprint(tulip_id, task)
+    fig_rhythm = make_rhythm_ladder(tulip_id, task)
+    fig_ribbon = make_evidence_ribbon(feature_cache, tulip_id)
+
     left_ts = load_timeseries(tulip_id, task, 'LeftWrist')
     right_ts = load_timeseries(tulip_id, task, 'RightWrist')
     task_label = TASK_LABELS_KR.get(task, task)
     fig_l = make_timeseries_plot(left_ts, f'{task_label} — Left Wrist')
     fig_r = make_timeseries_plot(right_ts, f'{task_label} — Right Wrist')
-    return fig_l, fig_r
+
+    return fig_spectral, fig_rhythm, fig_ribbon, fig_l, fig_r
 
 
-# ─── Video Player ───
+# ─── Tab 4: UPDRS ───
+@app.callback(
+    Output('updrs-heatmap', 'figure'),
+    Input('patient-dropdown', 'value'),
+)
+def update_updrs_heatmap(tulip_id):
+    return make_updrs_heatmap(labels_df)
+
+
+@app.callback(
+    Output('clinician-comparison-bar', 'figure'),
+    Output('updrs-detail-text', 'children'),
+    Input('updrs-heatmap', 'clickData'),
+    State('patient-dropdown', 'value'),
+)
+def update_updrs_detail(click_data, tulip_id):
+    if not click_data or not tulip_id:
+        return _empty_fig('Cell을 클릭하세요'), ''
+
+    point = click_data['points'][0]
+    updrs_name = point.get('x', '')
+    clicked_tulip = point.get('y', tulip_id)
+
+    fig = make_clinician_comparison_bar(labels_df, clicked_tulip, updrs_name)
+    detail = html.Div([
+        html.Strong(f'{clicked_tulip} — {updrs_name}'),
+        html.Br(),
+        html.Span('Clinician 3인의 개별 score와 평균 비교'),
+    ])
+    return fig, detail
+
+
+# ─── Tab 5: Video ───
 @app.callback(
     Output('video-player-container', 'children'),
-    Input('video-side-dropdown', 'value'),
-    Input('video-camera-dropdown', 'value'),
-)
-def update_video_player(side, camera):
-    if not side or not camera:
-        return html.P('Select video', className='placeholder-text')
-    video_url = f'/video/{side}/{camera}'
-    return html.Video(
-        src=video_url, controls=True, className='video-player',
-        style={'width': '100%', 'borderRadius': '8px'},
-    )
-
-
-# ─── Video Analysis ───
-@app.callback(
     Output('motion-timeline', 'figure'),
     Output('lr-tapping-comparison', 'figure'),
     Output('video-left-taps', 'children'),
@@ -274,14 +318,21 @@ def update_video_player(side, camera):
     Input('video-side-dropdown', 'value'),
     Input('video-camera-dropdown', 'value'),
 )
-def update_video_analysis(side, camera):
-    if not video_data or not side:
-        return (_empty_fig(), _empty_fig(), '—', '—', '—', '—')
+def update_video(side, camera):
+    if not side or not camera:
+        return (html.P('Select video'), _empty_fig(), _empty_fig(),
+                '—', '—', '—', '—')
 
+    # Video player
+    video_url = f'/video/{side}/{camera}'
+    player = html.Video(
+        src=video_url, controls=True, className='video-player',
+        style={'width': '100%', 'borderRadius': '8px'},
+    )
+
+    # Analysis
     side_data = video_data.get(side, {})
     cam_data = side_data.get(camera, {})
-    other_side = 'right' if side == 'left' else 'left'
-    other_data = video_data.get(other_side, {}).get(camera, {})
 
     fig_timeline = make_motion_timeline(cam_data, side) if cam_data else _empty_fig()
     fig_lr = make_lr_tapping_comparison(
@@ -296,10 +347,10 @@ def update_video_analysis(side, camera):
     l_cv = f"{left_cam.get('tap_interval_cv', 0):.3f}" if left_cam else '—'
     r_cv = f"{right_cam.get('tap_interval_cv', 0):.3f}" if right_cam else '—'
 
-    return fig_timeline, fig_lr, l_taps, r_taps, l_cv, r_cv
+    return player, fig_timeline, fig_lr, l_taps, r_taps, l_cv, r_cv
 
 
-# ─── Save Decision ───
+# ─── Decision Save ───
 @app.callback(
     Output('decision-store', 'data'),
     Output('save-feedback', 'children'),
@@ -322,7 +373,7 @@ def save_decision(n_clicks, tulip_id, classification, confidence, tags, notes, s
         'evidence_tags': tags,
         'notes': notes,
     }
-    return store, html.Span('Saved!', className='feedback-success')
+    return store, html.Span('✓ Saved!', className='feedback-success')
 
 
 # ─── Export JSON ───
@@ -339,15 +390,6 @@ def export_json(n_clicks, store):
         content=json.dumps(store, indent=2, ensure_ascii=False),
         filename='pd_decisions.json',
     )
-
-
-# ─── Task Store sync ───
-@app.callback(
-    Output('selected-task-store', 'data'),
-    Input('task-dropdown', 'value'),
-)
-def sync_task(task):
-    return task or 'TouchNose'
 
 
 # ══════════════════════════════════════════════════════════════

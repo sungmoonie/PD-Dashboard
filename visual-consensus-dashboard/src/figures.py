@@ -817,3 +817,254 @@ def make_evidence_ribbon(feature_df, tulip_id):
     for i in range(1, 4):
         fig.update_xaxes(showticklabels=False, row=i, col=1)
     return fig
+
+
+# ══════════════════════════════════════════════════════════════
+#  NEW vs CONFIRMED GROUP COMPARISON
+# ══════════════════════════════════════════════════════════════
+
+GROUP_COLORS_EXT = {
+    'PD': '#e53e3e', 'Healthy': '#38a169', 'Other': '#d69e2e', 'New': '#805ad5',
+}
+
+
+def make_new_vs_group_box(group_stats_df, task, metric='accel_rms', highlight_tulip=None):
+    """Box plot: Confirmed PD vs Healthy vs New Patient position.
+
+    Shows where the new patient falls relative to confirmed groups.
+    """
+    df = group_stats_df[group_stats_df.task == task].copy()
+    if df.empty:
+        return _empty_fig('데이터 없음')
+
+    metric_labels = {
+        'accel_rms': 'Accelerometer RMS (g)',
+        'gyro_rms': 'Gyroscope RMS (rad/s)',
+        'accel_std': 'Accelerometer Std',
+        'gyro_std': 'Gyroscope Std',
+    }
+
+    fig = go.Figure()
+
+    # Draw confirmed groups as boxes
+    for group in ['Healthy', 'PD']:
+        gd = df[df.group == group]
+        if gd.empty:
+            continue
+        color = GROUP_COLORS_EXT[group]
+        fig.add_trace(go.Box(
+            y=gd[metric].values, name=f'{group} (confirmed)',
+            marker=dict(color=color, size=6),
+            line=dict(color=color),
+            boxmean='sd', jitter=0.3, pointpos=0, boxpoints='all',
+        ))
+
+    # Overlay new patient(s)
+    new_data = df[df.group == 'New']
+    if not new_data.empty:
+        for tid in new_data['tulip_id'].unique():
+            pat = new_data[new_data.tulip_id == tid]
+            is_selected = (tid == highlight_tulip)
+            fig.add_trace(go.Scatter(
+                x=['Healthy (confirmed)'] * len(pat) + ['PD (confirmed)'] * len(pat),
+                y=list(pat[metric].values) + list(pat[metric].values),
+                mode='markers',
+                marker=dict(
+                    size=14 if is_selected else 11,
+                    color=GROUP_COLORS_EXT['New'],
+                    symbol='star',
+                    line=dict(width=2, color='white'),
+                ),
+                name=f'★ {tid} (New)',
+            ))
+
+    fig.update_layout(
+        title=dict(text=f'New Patient vs Confirmed Groups — {task}',
+                   font=dict(size=14)),
+        yaxis=dict(title=metric_labels.get(metric, metric), gridcolor='#edf2f7'),
+        legend=dict(orientation='h', y=-0.15),
+    )
+    return _apply_defaults(fig, height=420)
+
+
+def make_group_feature_comparison(feature_df, group_stats_df, highlight_tulip=None):
+    """Bar chart: mean feature values per group (PD/Healthy) with new patient overlay.
+
+    Shows all tasks averaged for each group, with new patient comparison.
+    """
+    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
+
+    if feature_df.empty:
+        return _empty_fig('데이터 없음')
+
+    # Merge group info
+    group_map = group_stats_df[['tulip_id', 'group']].drop_duplicates()
+    merged = feature_df.merge(group_map, on='tulip_id', how='left')
+
+    # Mean per group across all tasks
+    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
+    feat_labels = [FEATURE_LABELS[f] for f in features]
+
+    fig = make_subplots(rows=1, cols=4, subplot_titles=feat_labels,
+                        horizontal_spacing=0.08)
+
+    for i, feat in enumerate(features, 1):
+        for group in ['Healthy', 'PD']:
+            gd = merged[merged.group == group]
+            mean_val = gd[feat].mean() if not gd.empty else 0
+            std_val = gd[feat].std() if not gd.empty else 0
+            color = GROUP_COLORS_EXT[group]
+            fig.add_trace(go.Bar(
+                x=[group], y=[mean_val],
+                error_y=dict(type='data', array=[std_val], visible=True),
+                marker=dict(color=color, opacity=0.7),
+                name=group if i == 1 else None,
+                showlegend=(i == 1), legendgroup=group,
+            ), row=1, col=i)
+
+        # New patient value
+        if highlight_tulip:
+            new_data = merged[merged.tulip_id == highlight_tulip]
+            if not new_data.empty:
+                new_mean = new_data[feat].mean()
+                fig.add_trace(go.Scatter(
+                    x=['Healthy', 'PD'], y=[new_mean, new_mean],
+                    mode='lines+markers',
+                    line=dict(color=GROUP_COLORS_EXT['New'], width=2, dash='dash'),
+                    marker=dict(size=10, symbol='star', color=GROUP_COLORS_EXT['New']),
+                    name=f'★ {highlight_tulip}' if i == 1 else None,
+                    showlegend=(i == 1), legendgroup='new',
+                ), row=1, col=i)
+
+    fig.update_layout(
+        title=dict(text='Feature Comparison: Confirmed Groups vs New Patient',
+                   font=dict(size=14)),
+        legend=dict(orientation='h', y=-0.15),
+        barmode='group',
+        height=380,
+        **LAYOUT_DEFAULTS,
+    )
+    return fig
+
+
+def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
+    """Line + band chart: task-wise accel_rms profile per group.
+
+    PD mean±SD band, Healthy mean±SD band, new patient line overlaid.
+    """
+    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
+
+    df = group_stats_df.copy()
+    if df.empty:
+        return _empty_fig('데이터 없음')
+
+    tasks = SENSOR_TASKS
+    task_labels = [TASK_LABELS_KR.get(t, t) for t in tasks]
+
+    fig = go.Figure()
+
+    for group, color in [('Healthy', '#38a169'), ('PD', '#e53e3e')]:
+        gd = df[df.group == group]
+        means = []
+        stds = []
+        for task in tasks:
+            td = gd[gd.task == task]['accel_rms']
+            means.append(td.mean() if len(td) > 0 else 0)
+            stds.append(td.std() if len(td) > 0 else 0)
+
+        means = np.array(means)
+        stds = np.array(stds)
+
+        # Band (mean ± SD)
+        fig.add_trace(go.Scatter(
+            x=task_labels + task_labels[::-1],
+            y=list(means + stds) + list((means - stds)[::-1]),
+            fill='toself', fillcolor=f'rgba({",".join(str(int(color[i:i+2], 16)) for i in (1,3,5))},0.15)',
+            line=dict(width=0), showlegend=False, hoverinfo='skip',
+        ))
+        # Mean line
+        fig.add_trace(go.Scatter(
+            x=task_labels, y=means, mode='lines+markers',
+            line=dict(color=color, width=2),
+            marker=dict(size=6, color=color),
+            name=f'{group} (mean±SD)',
+        ))
+
+    # New patient overlay
+    if highlight_tulip:
+        new_data = df[df.tulip_id == highlight_tulip]
+        if not new_data.empty:
+            new_vals = []
+            for task in tasks:
+                td = new_data[new_data.task == task]['accel_rms']
+                new_vals.append(td.mean() if len(td) > 0 else 0)
+            fig.add_trace(go.Scatter(
+                x=task_labels, y=new_vals,
+                mode='lines+markers',
+                line=dict(color='#805ad5', width=3, dash='dot'),
+                marker=dict(size=10, symbol='star', color='#805ad5',
+                            line=dict(width=2, color='white')),
+                name=f'★ {highlight_tulip} (New)',
+            ))
+
+    fig.update_layout(
+        title=dict(text='Task Profile — New Patient vs Confirmed Groups', font=dict(size=14)),
+        xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
+        yaxis=dict(title='Accel RMS (g)', gridcolor='#edf2f7'),
+        legend=dict(orientation='h', y=-0.2, font=dict(size=11)),
+    )
+    return _apply_defaults(fig, height=450)
+
+
+def make_asymmetry_scatter(group_stats_df, task, highlight_tulip=None):
+    """L vs R scatter with group coloring and new patient highlight."""
+    df = group_stats_df[group_stats_df.task == task].copy()
+    if df.empty:
+        return _empty_fig('데이터 없음')
+
+    left = df[df.wrist == 'Left'][['tulip_id', 'group', 'accel_rms']].rename(
+        columns={'accel_rms': 'left_rms'})
+    right = df[df.wrist == 'Right'][['tulip_id', 'accel_rms']].rename(
+        columns={'accel_rms': 'right_rms'})
+    merged = left.merge(right, on='tulip_id', how='inner')
+
+    if merged.empty:
+        return _empty_fig('좌우 데이터 부족')
+
+    fig = go.Figure()
+    max_val = max(merged['left_rms'].max(), merged['right_rms'].max()) * 1.1
+
+    # Symmetry line
+    fig.add_trace(go.Scatter(
+        x=[0, max_val], y=[0, max_val], mode='lines',
+        line=dict(color='#cbd5e0', width=1, dash='dash'),
+        name='Perfect Symmetry', hoverinfo='skip',
+    ))
+
+    for group in ['Healthy', 'PD', 'New']:
+        gd = merged[merged.group == group]
+        if gd.empty:
+            continue
+        color = GROUP_COLORS_EXT[group]
+        is_new = (group == 'New')
+        fig.add_trace(go.Scatter(
+            x=gd['left_rms'], y=gd['right_rms'],
+            mode='markers+text',
+            marker=dict(
+                size=14 if is_new else 9,
+                color=color, opacity=0.9,
+                symbol='star' if is_new else 'circle',
+                line=dict(width=2 if is_new else 1, color='white'),
+            ),
+            text=gd['tulip_id'].apply(lambda x: x.replace('TULIP_', 'T')),
+            textposition='top center', textfont=dict(size=8 if not is_new else 10),
+            name=f'{"★ " if is_new else ""}{group}',
+        ))
+
+    fig.update_layout(
+        title=dict(text=f'좌우 대칭성 — {task} (New vs Confirmed)', font=dict(size=14)),
+        xaxis=dict(title='Left Wrist RMS', gridcolor='#edf2f7', range=[0, max_val]),
+        yaxis=dict(title='Right Wrist RMS', gridcolor='#edf2f7', range=[0, max_val]),
+        legend=dict(orientation='h', y=-0.15),
+    )
+    return _apply_defaults(fig, height=420)
