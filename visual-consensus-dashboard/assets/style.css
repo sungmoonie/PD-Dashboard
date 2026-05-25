@@ -523,6 +523,35 @@ body {
     margin-right: 4px;
 }
 
+/* ===== Video Split Layout ===== */
+.video-split-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+    align-items: start;
+}
+
+.video-left-panel {
+    position: sticky;
+    top: 16px;
+}
+
+.video-right-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+@media (max-width: 1024px) {
+    .video-split-layout {
+        grid-template-columns: 1fr;
+    }
+    .video-left-panel {
+        position: static;
+    }
+}
+
 /* ===== Loading State ===== */
 ._dash-loading {
     opacity: 0.5;

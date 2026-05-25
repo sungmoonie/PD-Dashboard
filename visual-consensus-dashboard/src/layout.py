@@ -182,14 +182,15 @@ def create_layout():
                     ]),
                 ]),
 
-                # ── 5. 영상 분석 ──
+                # ── 5. 영상 분석 (2분할 레이아웃) ──
                 dcc.Tab(label='영상 분석', className='tab',
                         selected_className='tab--selected', children=[
                     html.Div(className='tab-content', children=[
-                        _tab_desc('Finger Tapping 영상(6대 카메라)에서 추출한 motion intensity로 '
-                                  '좌/우 tapping 정량 비교와 multi-camera 관점 비교를 제공합니다.'),
+                        _tab_desc('Finger Tapping 영상과 정량 분석을 나란히 표시하여 '
+                                  '움직임 패턴을 시각적으로 해석합니다.'),
+                        # Controls
                         html.Div(className='inline-task-selector', children=[
-                            html.Label('카메라 / 방향', className='inline-label'),
+                            html.Label('방향', className='inline-label'),
                             dcc.Dropdown(
                                 id='video-side-dropdown',
                                 options=[
@@ -197,29 +198,43 @@ def create_layout():
                                     {'label': 'Right Hand', 'value': 'right'},
                                 ],
                                 value='left', clearable=False,
-                                style={'width': '160px', 'color': '#2c3e50'},
+                                style={'width': '140px', 'color': '#2c3e50'},
                             ),
+                            html.Label('카메라', className='inline-label',
+                                       style={'marginLeft': '12px'}),
                             dcc.Dropdown(
                                 id='video-camera-dropdown',
                                 options=[{'label': f'Camera {i}', 'value': f'Camera{i}.mp4'}
                                          for i in range(1, 7)],
                                 value='Camera1.mp4', clearable=False,
-                                style={'width': '160px', 'color': '#2c3e50'},
+                                style={'width': '140px', 'color': '#2c3e50'},
                             ),
                         ]),
-                        html.Div(className='card', id='video-player-container'),
-                        html.Div(className='summary-cards-row', children=[
-                            _card('left-tap-count', 'Left Taps'),
-                            _card('right-tap-count', 'Right Taps'),
-                            _card('left-cv-card', 'L Interval CV'),
-                            _card('right-cv-card', 'R Interval CV'),
+                        # ── 2분할: 좌=영상+메트릭, 우=차트 ──
+                        html.Div(className='video-split-layout', children=[
+                            # Left panel: Video + metrics
+                            html.Div(className='video-left-panel', children=[
+                                html.Div(className='card', id='video-player-container',
+                                         style={'marginBottom': '12px'}),
+                                html.Div(className='summary-cards-row',
+                                         style={'gridTemplateColumns': 'repeat(2, 1fr)'}, children=[
+                                    _card('left-tap-count', 'Left Taps'),
+                                    _card('right-tap-count', 'Right Taps'),
+                                    _card('left-cv-card', 'L Interval CV'),
+                                    _card('right-cv-card', 'R Interval CV'),
+                                ]),
+                            ]),
+                            # Right panel: Charts stacked
+                            html.Div(className='video-right-panel', children=[
+                                html.Div(className='card', children=[
+                                    dcc.Graph(id='motion-timeline-chart'),
+                                ]),
+                                html.Div(className='card', children=[
+                                    dcc.Graph(id='lr-tapping-chart'),
+                                ]),
+                            ]),
                         ]),
-                        html.Div(className='card', children=[
-                            dcc.Graph(id='motion-timeline-chart'),
-                        ]),
-                        html.Div(className='card', children=[
-                            dcc.Graph(id='lr-tapping-chart'),
-                        ]),
+                        # Bottom: full-width charts
                         html.Div(className='chart-row', children=[
                             html.Div(className='card', children=[
                                 dcc.Graph(id='tapping-summary-chart'),
