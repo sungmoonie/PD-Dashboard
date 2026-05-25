@@ -246,3 +246,42 @@ def get_task_list():
         {'label': TASK_LABELS_KR.get(t, t), 'value': t}
         for t in SENSOR_TASKS
     ]
+
+
+@lru_cache(maxsize=1)
+def build_group_stats():
+    """Precompute per-subject per-task sensor RMS stats for group comparison.
+
+    Returns DataFrame: tulip_id, condition, task, wrist,
+                       accel_rms, gyro_rms, accel_std, gyro_std
+    """
+    patients = load_patients()
+    cond_map = dict(zip(patients['tulip_id'], patients['condition']))
+    rows = []
+    for tulip_id in patients['tulip_id']:
+        condition = cond_map.get(tulip_id, 'Unknown')
+        # Simplify condition to PD / Healthy / Other
+        if "Parkinson" in condition:
+            group = 'PD'
+        elif "Healthy" in condition:
+            group = 'Healthy'
+        else:
+            group = 'Other'
+        for task in SENSOR_TASKS:
+            for wrist in ['LeftWrist', 'RightWrist']:
+                ts = load_timeseries(tulip_id, task, wrist)
+                if ts.empty:
+                    continue
+                rows.append({
+                    'tulip_id': tulip_id,
+                    'condition': condition,
+                    'group': group,
+                    'task': task,
+                    'wrist': wrist.replace('Wrist', ''),
+                    'accel_rms': float(np.sqrt(np.mean(ts['accel_mag'].values ** 2))),
+                    'gyro_rms': float(np.sqrt(np.mean(ts['gyro_mag'].values ** 2))),
+                    'accel_std': float(np.std(ts['accel_mag'].values)),
+                    'gyro_std': float(np.std(ts['gyro_mag'].values)),
+                    'duration': float(ts['time'].max()),
+                })
+    return pd.DataFrame(rows)

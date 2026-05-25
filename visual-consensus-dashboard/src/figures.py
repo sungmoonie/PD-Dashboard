@@ -1,4 +1,4 @@
-"""Plotly figure creation functions for the clinical dashboard."""
+"""Plotly figure creation functions for PD clinical decision support dashboard."""
 
 import plotly.graph_objects as go
 import numpy as np
@@ -10,6 +10,8 @@ LAYOUT_DEFAULTS = dict(
     margin=dict(l=50, r=20, t=50, b=60),
     font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
 )
+
+GROUP_COLORS = {'PD': '#e53e3e', 'Healthy': '#38a169', 'Other': '#d69e2e'}
 
 
 def _apply_defaults(fig, height=370):
@@ -25,17 +27,12 @@ def _empty_fig(msg='Data 없음', height=370):
 
 
 # ══════════════════════════════════════════════════════════════
-#  TAB 2: UPDRS HEATMAP
+#  TAB 2: UPDRS CLINICAL ASSESSMENT
 # ══════════════════════════════════════════════════════════════
 
 def make_updrs_heatmap(labels_df):
-    """Heatmap: 12 subjects × UPDRS items, values = mean of 3 clinicians.
-
-    Args:
-        labels_df: DataFrame with tulip_id, updrs_name, mean, is_numeric
-    """
+    """Heatmap: 12 subjects x UPDRS items, values = mean of 3 clinicians."""
     numeric = labels_df[labels_df.is_numeric == True].copy()
-    # Exclude H&Y (different scale) and non-motor items
     exclude = ['Hoehn and Yahr Stage']
     numeric = numeric[~numeric.updrs_name.isin(exclude)]
 
@@ -45,7 +42,6 @@ def make_updrs_heatmap(labels_df):
     pivot = numeric.pivot_table(index='tulip_id', columns='updrs_name', values='mean', aggfunc='first')
     pivot = pivot.sort_index()
 
-    # Shorten long UPDRS names for display
     col_labels = [c[:25] + '...' if len(c) > 28 else c for c in pivot.columns]
 
     fig = go.Figure(data=go.Heatmap(
@@ -62,13 +58,13 @@ def make_updrs_heatmap(labels_df):
         xaxis=dict(tickvals=list(pivot.columns), ticktext=col_labels,
                    side='bottom', tickangle=-45, tickfont=dict(size=9)),
         yaxis=dict(tickfont=dict(size=11)),
-        title=dict(text='UPDRS Part III — 전체 Clinician 평균 Score Heatmap', font=dict(size=14)),
+        title=dict(text='UPDRS Part III — Clinician 평균 Score', font=dict(size=14)),
     )
     return _apply_defaults(fig, height=max(400, len(pivot) * 35 + 150))
 
 
 def make_clinician_comparison_bar(labels_df, tulip_id, updrs_name):
-    """Bar chart comparing 3 clinicians' scores for one subject × one item."""
+    """Bar chart comparing 3 clinicians' scores for one subject x one item."""
     row = labels_df[
         (labels_df.tulip_id == tulip_id) &
         (labels_df.updrs_name == updrs_name) &
@@ -88,7 +84,6 @@ def make_clinician_comparison_bar(labels_df, tulip_id, updrs_name):
         marker=dict(color=colors, line=dict(width=1, color='white')),
         text=[f'{s:.1f}' for s in scores], textposition='auto',
         textfont=dict(size=14, color='white'),
-        hovertemplate='%{x}: %{y:.1f}/4<extra></extra>',
     ))
     mean_val = sum(scores) / 3
     fig.add_hline(y=mean_val, line_dash='dash', line_color='#718096',
@@ -96,75 +91,12 @@ def make_clinician_comparison_bar(labels_df, tulip_id, updrs_name):
     fig.update_layout(
         title=dict(text=f'{tulip_id} — {updrs_name}', font=dict(size=13)),
         yaxis=dict(title='Score (0-4)', range=[0, 4.3], gridcolor='#edf2f7', dtick=1),
-        xaxis=dict(tickfont=dict(size=12)),
     )
     return _apply_defaults(fig, height=350)
 
 
 # ══════════════════════════════════════════════════════════════
-#  TAB 3: INTER-RATER AGREEMENT
-# ══════════════════════════════════════════════════════════════
-
-def make_disagreement_heatmap(labels_df):
-    """Heatmap of max-min disagreement across 3 clinicians."""
-    numeric = labels_df[labels_df.is_numeric == True].copy()
-    exclude = ['Hoehn and Yahr Stage']
-    numeric = numeric[~numeric.updrs_name.isin(exclude)]
-
-    if numeric.empty:
-        return _empty_fig('불일치 데이터 없음')
-
-    pivot = numeric.pivot_table(index='tulip_id', columns='updrs_name',
-                                values='disagreement', aggfunc='first')
-    pivot = pivot.sort_index()
-
-    col_labels = [c[:25] + '...' if len(c) > 28 else c for c in pivot.columns]
-
-    fig = go.Figure(data=go.Heatmap(
-        z=pivot.values,
-        x=list(pivot.columns),
-        y=list(pivot.index),
-        colorscale=[[0, '#c6f6d5'], [0.25, '#fefcbf'], [0.5, '#fed7d7'], [1, '#e53e3e']],
-        zmin=0, zmax=4,
-        text=np.where(np.isnan(pivot.values), '', pivot.values.astype(int).astype(str)),
-        texttemplate='%{text}', textfont=dict(size=10),
-        hovertemplate='Subject: %{y}<br>Item: %{x}<br>Disagreement: %{z:.0f}<extra></extra>',
-        colorbar=dict(title='Max-Min', thickness=15),
-    ))
-    fig.update_layout(
-        xaxis=dict(tickvals=list(pivot.columns), ticktext=col_labels,
-                   side='bottom', tickangle=-45, tickfont=dict(size=9)),
-        yaxis=dict(tickfont=dict(size=11)),
-        title=dict(text='Inter-rater Disagreement (Max - Min Score)', font=dict(size=14)),
-    )
-    return _apply_defaults(fig, height=max(400, len(pivot) * 35 + 150))
-
-
-def make_agreement_stats(labels_df):
-    """Return summary stats dict for inter-rater agreement."""
-    numeric = labels_df[(labels_df.is_numeric == True) &
-                        (labels_df.updrs_name != 'Hoehn and Yahr Stage')]
-    if numeric.empty:
-        return {}
-
-    total = len(numeric)
-    perfect = len(numeric[numeric.disagreement == 0])
-    mild = len(numeric[(numeric.disagreement > 0) & (numeric.disagreement <= 1)])
-    high = len(numeric[numeric.disagreement >= 2])
-
-    return {
-        'total_ratings': total,
-        'perfect_agreement': perfect,
-        'perfect_pct': round(perfect / total * 100, 1),
-        'mild_disagreement': mild,
-        'high_disagreement': high,
-        'high_pct': round(high / total * 100, 1),
-        'mean_disagreement': round(numeric['disagreement'].mean(), 2),
-    }
-
-
-# ══════════════════════════════════════════════════════════════
-#  TAB 4: SENSOR TIMESERIES
+#  TAB 3: SENSOR TIMESERIES
 # ══════════════════════════════════════════════════════════════
 
 def make_timeseries_plot(ts_df, title='Sensor Data'):
@@ -192,7 +124,6 @@ def make_timeseries_plot(ts_df, title='Sensor Data'):
             legendgroup='gyro',
         ), row=2, col=1)
 
-    # Add signal magnitude as dashed overlay
     fig.add_trace(go.Scatter(
         x=ts_df['time'], y=ts_df['accel_mag'], mode='lines',
         name='|Accel|', line=dict(color='#1a365d', width=1.5, dash='dot'),
@@ -211,7 +142,190 @@ def make_timeseries_plot(ts_df, title='Sensor Data'):
 
 
 # ══════════════════════════════════════════════════════════════
-#  TAB 5: LEFT-RIGHT COMPARISON
+#  TAB 4: PD vs HEALTHY GROUP COMPARISON
+# ══════════════════════════════════════════════════════════════
+
+def make_group_box_plot(group_stats_df, task, metric='accel_rms', highlight_tulip=None):
+    """Box plot comparing PD vs Healthy groups for a given task.
+    Highlights selected patient's position."""
+    df = group_stats_df[group_stats_df.task == task].copy()
+    if df.empty:
+        return _empty_fig('데이터 없음')
+
+    metric_labels = {
+        'accel_rms': 'Accelerometer RMS (g)',
+        'gyro_rms': 'Gyroscope RMS (rad/s)',
+        'accel_std': 'Accelerometer Std',
+        'gyro_std': 'Gyroscope Std',
+    }
+
+    fig = go.Figure()
+
+    for group in ['Healthy', 'PD', 'Other']:
+        gd = df[df.group == group]
+        if gd.empty:
+            continue
+        # Combine both wrists
+        vals = gd[metric].values
+        color = GROUP_COLORS.get(group, '#718096')
+
+        fig.add_trace(go.Box(
+            y=vals, name=group,
+            marker=dict(color=color, size=6),
+            line=dict(color=color),
+            boxmean='sd',
+            jitter=0.3, pointpos=0,
+            boxpoints='all',
+            hovertemplate=f'{group}<br>{metric_labels.get(metric, metric)}: %{{y:.4f}}<extra></extra>',
+        ))
+
+    # Highlight selected patient
+    if highlight_tulip:
+        pat_data = df[df.tulip_id == highlight_tulip]
+        if not pat_data.empty:
+            pat_group = pat_data.iloc[0]['group']
+            for _, row in pat_data.iterrows():
+                fig.add_trace(go.Scatter(
+                    x=[pat_group], y=[row[metric]],
+                    mode='markers',
+                    marker=dict(size=16, color='#1a365d', symbol='star',
+                                line=dict(width=2, color='white')),
+                    name=f'{highlight_tulip} ({row["wrist"]})',
+                    hovertemplate=f'{highlight_tulip} ({row["wrist"]})<br>{row[metric]:.4f}<extra></extra>',
+                ))
+
+    fig.update_layout(
+        title=dict(text=f'PD vs Healthy — {task} ({metric_labels.get(metric, metric)})',
+                   font=dict(size=14)),
+        yaxis=dict(title=metric_labels.get(metric, metric), gridcolor='#edf2f7'),
+        showlegend=True,
+        legend=dict(orientation='h', y=-0.15),
+    )
+    return _apply_defaults(fig, height=420)
+
+
+def make_group_task_summary(group_stats_df, highlight_tulip=None):
+    """Grouped bar chart: mean accel RMS per task, PD vs Healthy.
+    Shows where the selected patient falls."""
+    df = group_stats_df.copy()
+    if df.empty:
+        return _empty_fig('데이터 없음')
+
+    # Mean per group per task
+    summary = df.groupby(['group', 'task'])['accel_rms'].mean().reset_index()
+
+    fig = go.Figure()
+    tasks = sorted(df['task'].unique())
+
+    for group in ['Healthy', 'PD', 'Other']:
+        gd = summary[summary.group == group]
+        if gd.empty:
+            continue
+        task_means = []
+        for t in tasks:
+            row = gd[gd.task == t]
+            task_means.append(row['accel_rms'].values[0] if len(row) > 0 else 0)
+
+        fig.add_trace(go.Bar(
+            x=tasks, y=task_means, name=group,
+            marker=dict(color=GROUP_COLORS.get(group, '#718096'), opacity=0.7),
+            text=[f'{v:.4f}' for v in task_means], textposition='outside',
+            textfont=dict(size=9),
+        ))
+
+    # Overlay selected patient
+    if highlight_tulip:
+        pat = df[df.tulip_id == highlight_tulip]
+        if not pat.empty:
+            pat_means = pat.groupby('task')['accel_rms'].mean()
+            fig.add_trace(go.Scatter(
+                x=list(pat_means.index), y=list(pat_means.values),
+                mode='markers+lines',
+                marker=dict(size=12, color='#1a365d', symbol='star',
+                            line=dict(width=2, color='white')),
+                line=dict(color='#1a365d', width=2, dash='dot'),
+                name=f'{highlight_tulip} (selected)',
+            ))
+
+    fig.update_layout(
+        title=dict(text='Task별 Movement Intensity — 그룹 평균 비교', font=dict(size=14)),
+        xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
+        yaxis=dict(title='Accel RMS (g)', gridcolor='#edf2f7'),
+        barmode='group',
+        legend=dict(orientation='h', y=-0.2),
+    )
+    return _apply_defaults(fig, height=450)
+
+
+def make_asymmetry_comparison(group_stats_df, task, highlight_tulip=None):
+    """Scatter: Left RMS vs Right RMS, colored by group.
+    Diagonal = perfect symmetry. Deviation = asymmetry (PD marker)."""
+    df = group_stats_df[group_stats_df.task == task].copy()
+    if df.empty:
+        return _empty_fig('데이터 없음')
+
+    # Pivot to get left/right per subject
+    left = df[df.wrist == 'Left'][['tulip_id', 'group', 'accel_rms']].rename(
+        columns={'accel_rms': 'left_rms'})
+    right = df[df.wrist == 'Right'][['tulip_id', 'accel_rms']].rename(
+        columns={'accel_rms': 'right_rms'})
+    merged = left.merge(right, on='tulip_id', how='inner')
+
+    if merged.empty:
+        return _empty_fig('좌우 데이터 부족')
+
+    fig = go.Figure()
+
+    # Symmetry line
+    max_val = max(merged['left_rms'].max(), merged['right_rms'].max()) * 1.1
+    fig.add_trace(go.Scatter(
+        x=[0, max_val], y=[0, max_val], mode='lines',
+        line=dict(color='#cbd5e0', width=1, dash='dash'),
+        name='Perfect Symmetry', hoverinfo='skip',
+    ))
+
+    for group in ['Healthy', 'PD', 'Other']:
+        gd = merged[merged.group == group]
+        if gd.empty:
+            continue
+        color = GROUP_COLORS.get(group, '#718096')
+        is_highlight = gd['tulip_id'] == highlight_tulip if highlight_tulip else [False] * len(gd)
+
+        fig.add_trace(go.Scatter(
+            x=gd['left_rms'], y=gd['right_rms'],
+            mode='markers+text',
+            marker=dict(
+                size=[14 if h else 9 for h in is_highlight],
+                color=color, opacity=0.8,
+                symbol=['star' if h else 'circle' for h in is_highlight],
+                line=dict(width=1, color='white'),
+            ),
+            text=gd['tulip_id'].apply(lambda x: x.replace('TULIP_', 'T')),
+            textposition='top center', textfont=dict(size=8),
+            name=group,
+            hovertemplate='%{text}<br>Left: %{x:.4f}<br>Right: %{y:.4f}<extra></extra>',
+            customdata=gd['tulip_id'],
+        ))
+
+    fig.update_layout(
+        title=dict(text=f'좌우 대칭성 — {task}', font=dict(size=14)),
+        xaxis=dict(title='Left Wrist Accel RMS', gridcolor='#edf2f7',
+                   scaleanchor='y', range=[0, max_val]),
+        yaxis=dict(title='Right Wrist Accel RMS', gridcolor='#edf2f7',
+                   range=[0, max_val]),
+        legend=dict(orientation='h', y=-0.15),
+    )
+    fig.add_annotation(x=max_val * 0.3, y=max_val * 0.8,
+                       text='Right > Left', showarrow=False,
+                       font=dict(size=10, color='#a0aec0'))
+    fig.add_annotation(x=max_val * 0.7, y=max_val * 0.2,
+                       text='Left > Right', showarrow=False,
+                       font=dict(size=10, color='#a0aec0'))
+    return _apply_defaults(fig, height=450)
+
+
+# ══════════════════════════════════════════════════════════════
+#  TAB 3 supplement: LEFT-RIGHT COMPARISON
 # ══════════════════════════════════════════════════════════════
 
 def make_lr_overlay_plot(left_df, right_df, channel='accel_mag', task_name=''):
@@ -223,21 +337,18 @@ def make_lr_overlay_plot(left_df, right_df, channel='accel_mag', task_name=''):
     if not left_df.empty:
         fig.add_trace(go.Scatter(
             x=left_df['time'], y=left_df[channel], mode='lines',
-            name='Left Wrist', line=dict(color='#4299e1', width=1.5),
-            opacity=0.8,
+            name='Left Wrist', line=dict(color='#4299e1', width=1.5), opacity=0.8,
         ))
     if not right_df.empty:
         fig.add_trace(go.Scatter(
             x=right_df['time'], y=right_df[channel], mode='lines',
-            name='Right Wrist', line=dict(color='#fc8181', width=1.5),
-            opacity=0.8,
+            name='Right Wrist', line=dict(color='#fc8181', width=1.5), opacity=0.8,
         ))
 
     channel_label = {'accel_mag': 'Accelerometer Magnitude (g)',
                      'gyro_mag': 'Gyroscope Magnitude (rad/s)'}
     fig.update_layout(
-        title=dict(text=f'좌우 비교 — {task_name} ({channel_label.get(channel, channel)})',
-                   font=dict(size=14)),
+        title=dict(text=f'좌우 Waveform 비교 — {task_name}', font=dict(size=14)),
         xaxis=dict(title='Time (s)', gridcolor='#edf2f7'),
         yaxis=dict(title=channel_label.get(channel, channel), gridcolor='#edf2f7'),
         legend=dict(orientation='h', y=-0.15),
@@ -265,7 +376,7 @@ def make_lr_rms_bar(left_stats, right_stats, task_name=''):
         text=[f'{v:.4f}' for v in right_vals], textposition='auto',
     ))
     fig.update_layout(
-        title=dict(text=f'좌우 RMS 비교 — {task_name}', font=dict(size=14)),
+        title=dict(text=f'좌우 Signal 통계 비교 — {task_name}', font=dict(size=14)),
         yaxis=dict(title='Signal Value', gridcolor='#edf2f7'),
         barmode='group',
         legend=dict(orientation='h', y=-0.15),
@@ -274,7 +385,7 @@ def make_lr_rms_bar(left_stats, right_stats, task_name=''):
 
 
 # ══════════════════════════════════════════════════════════════
-#  TAB 6: VIDEO ANALYSIS (kept from original)
+#  TAB 5: VIDEO ANALYSIS
 # ══════════════════════════════════════════════════════════════
 
 def make_motion_timeline(video_data, side):

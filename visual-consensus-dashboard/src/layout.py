@@ -1,7 +1,7 @@
-"""Dashboard layout — 6-tab clinical data dashboard."""
+"""Dashboard layout — PD Clinical Decision Support (5 tabs)."""
 
 from dash import html, dcc
-from src.data_loader import get_subject_list, get_task_list, TASK_LABELS_KR
+from src.data_loader import get_subject_list, get_task_list
 
 
 def _card(card_id, label, initial='—'):
@@ -15,33 +15,20 @@ def _tab_desc(text):
     return html.Div(className='tab-description', children=[html.P(text)])
 
 
-def _task_selector(dropdown_id, label='Motor Task 선택'):
-    task_options = get_task_list()
-    return html.Div(className='inline-task-selector', children=[
-        html.Label(label, className='inline-label'),
-        dcc.Dropdown(
-            id=dropdown_id,
-            options=task_options,
-            value=task_options[0]['value'] if task_options else None,
-            clearable=False,
-            style={'width': '220px', 'color': '#2c3e50'},
-        ),
-    ])
-
-
 def create_layout():
     subject_options = get_subject_list()
+    task_options = get_task_list()
 
     return html.Div([
         # ── Header ──
         html.Div(className='dashboard-header', children=[
             html.Div(className='header-title-section', children=[
-                html.H1("PD Motor Assessment Dashboard"),
-                html.P('TULIP/PADS 실제 임상 데이터 기반 · UPDRS + Sensor + Video'),
+                html.H1("PD Clinical Decision Support"),
+                html.P('스마트워치 센서 + 멀티카메라 영상 기반 · Movement Interpretation 보조 시스템'),
             ]),
             html.Div(className='header-controls', children=[
                 html.Div(className='dropdown-container', children=[
-                    html.Label('Subject 선택'),
+                    html.Label('환자 선택'),
                     dcc.Dropdown(
                         id='patient-dropdown',
                         options=subject_options,
@@ -63,23 +50,20 @@ def create_layout():
                 dcc.Tab(label='환자 Overview', className='tab',
                         selected_className='tab--selected', children=[
                     html.Div(className='tab-content', children=[
-                        _tab_desc('환자 인구통계, 진단, NMS 증상, H&Y Stage 요약'),
-                        # Demographics row
+                        _tab_desc('환자 인구통계, 진단, H&Y Stage, Non-Motor Symptoms 요약'),
                         html.Div(id='patient-demographics', className='demographics-row'),
-                        # Summary cards
                         html.Div(className='summary-cards-row', children=[
                             _card('condition-card', 'Condition'),
                             _card('hy-card', 'H&Y Stage'),
-                            _card('diagnosis-card', 'Diagnosis'),
+                            _card('diagnosis-card', 'Clinician Diagnosis'),
                             _card('nms-count-card', 'NMS Symptoms'),
                             _card('bmi-card', 'BMI'),
                             _card('handedness-card', 'Handedness'),
                         ]),
-                        # NMS symptom list
                         html.Div(className='card', children=[
                             html.H3('Non-Motor Symptoms (NMS)', className='section-title'),
                             html.Div(id='nms-symptom-list', className='nms-symptom-list',
-                                     children='Subject를 선택하면 NMS 증상이 표시됩니다.'),
+                                     children='환자를 선택하면 NMS 증상이 표시됩니다.'),
                         ]),
                     ]),
                 ]),
@@ -88,8 +72,8 @@ def create_layout():
                 dcc.Tab(label='UPDRS 임상 평가', className='tab',
                         selected_className='tab--selected', children=[
                     html.Div(className='tab-content', children=[
-                        _tab_desc('12명 Subject × 28개 UPDRS 항목의 3명 Clinician 평균 Score 히트맵. '
-                                  '셀 클릭 시 Clinician별 비교 차트가 표시됩니다.'),
+                        _tab_desc('3명 Clinician의 UPDRS Part III 평가 결과. '
+                                  '히트맵 셀 클릭 시 Clinician별 점수 비교가 표시됩니다.'),
                         html.Div(className='card', children=[
                             dcc.Graph(id='updrs-heatmap'),
                         ]),
@@ -101,90 +85,109 @@ def create_layout():
                     ]),
                 ]),
 
-                # ── 3. Inter-rater Agreement ──
-                dcc.Tab(label='Inter-rater Agreement', className='tab',
+                # ── 3. 센서 & 좌우 비교 ──
+                dcc.Tab(label='센서 & 좌우 비교', className='tab',
                         selected_className='tab--selected', children=[
                     html.Div(className='tab-content', children=[
-                        _tab_desc('3명 Clinician 간 점수 불일치(Max - Min)를 히트맵으로 시각화합니다. '
-                                  '불일치가 큰 항목/환자를 한눈에 파악합니다.'),
-                        html.Div(className='summary-cards-row', children=[
-                            _card('agreement-perfect-card', 'Perfect Agreement'),
-                            _card('agreement-high-card', 'High Disagreement'),
-                            _card('agreement-mean-card', 'Mean Disagreement'),
-                        ]),
-                        html.Div(className='card', children=[
-                            dcc.Graph(id='disagreement-heatmap'),
-                        ]),
-                    ]),
-                ]),
-
-                # ── 4. 센서 데이터 ──
-                dcc.Tab(label='센서 데이터', className='tab',
-                        selected_className='tab--selected', children=[
-                    html.Div(className='tab-content', children=[
-                        _tab_desc('PADS 스마트워치 6축 센서 원시 데이터 (가속도계 + 자이로스코프). '
-                                  'Task와 손목을 선택하여 시계열을 확인합니다.'),
+                        _tab_desc('PADS 스마트워치 6축 원시 신호와 좌우 손목 비교. '
+                                  'PD 환자의 lateralized motor impairment를 확인합니다.'),
                         html.Div(className='inline-task-selector', children=[
                             html.Label('Task', className='inline-label'),
                             dcc.Dropdown(
                                 id='sensor-task-dropdown',
-                                options=get_task_list(),
+                                options=task_options,
                                 value='TouchNose',
                                 clearable=False,
                                 style={'width': '200px', 'color': '#2c3e50'},
                             ),
-                            html.Label('Wrist', className='inline-label',
-                                       style={'marginLeft': '16px'}),
-                            dcc.RadioItems(
-                                id='sensor-wrist-toggle',
-                                options=[
-                                    {'label': 'Left', 'value': 'LeftWrist'},
-                                    {'label': 'Right', 'value': 'RightWrist'},
-                                ],
-                                value='LeftWrist',
-                                inline=True,
-                                style={'display': 'flex', 'gap': '12px'},
-                            ),
                         ]),
+                        # L/R summary
                         html.Div(className='summary-cards-row', children=[
-                            _card('sensor-accel-rms-card', 'Accel RMS'),
-                            _card('sensor-gyro-rms-card', 'Gyro RMS'),
+                            _card('sensor-left-rms', 'Left Accel RMS'),
+                            _card('sensor-right-rms', 'Right Accel RMS'),
+                            _card('sensor-asymmetry', 'Asymmetry Index'),
                             _card('sensor-duration-card', 'Duration (s)'),
-                            _card('sensor-samples-card', 'Samples'),
                         ]),
-                        html.Div(className='card', children=[
-                            dcc.Graph(id='sensor-timeseries-chart'),
-                        ]),
-                    ]),
-                ]),
-
-                # ── 5. 좌우 비교 ──
-                dcc.Tab(label='좌우 비교', className='tab',
-                        selected_className='tab--selected', children=[
-                    html.Div(className='tab-content', children=[
-                        _tab_desc('선택한 Task에서 좌/우 손목 신호 크기를 오버레이하여 비교합니다. '
-                                  'RMS 기반 비대칭 지수를 정량적으로 확인합니다.'),
-                        _task_selector('lr-task-dropdown', 'Task 선택'),
-                        html.Div(className='summary-cards-row', children=[
-                            _card('lr-left-rms-card', 'Left RMS'),
-                            _card('lr-right-rms-card', 'Right RMS'),
-                            _card('lr-asymmetry-card', 'Asymmetry Index'),
-                        ]),
+                        # L/R overlay
                         html.Div(className='card', children=[
                             dcc.Graph(id='lr-overlay-chart'),
                         ]),
+                        # L/R stats bar
                         html.Div(className='card', children=[
                             dcc.Graph(id='lr-rms-bar-chart'),
+                        ]),
+                        # Raw timeseries (expandable)
+                        html.Details(open=False, children=[
+                            html.Summary('원시 6축 센서 데이터 (Left Wrist)',
+                                         style={'cursor': 'pointer', 'fontWeight': '600',
+                                                'color': '#2b6cb0', 'marginBottom': '8px'}),
+                            html.Div(className='card', children=[
+                                dcc.Graph(id='sensor-left-timeseries'),
+                            ]),
+                        ]),
+                        html.Details(open=False, children=[
+                            html.Summary('원시 6축 센서 데이터 (Right Wrist)',
+                                         style={'cursor': 'pointer', 'fontWeight': '600',
+                                                'color': '#2b6cb0', 'marginBottom': '8px'}),
+                            html.Div(className='card', children=[
+                                dcc.Graph(id='sensor-right-timeseries'),
+                            ]),
                         ]),
                     ]),
                 ]),
 
-                # ── 6. 영상 분석 ──
+                # ── 4. PD vs Healthy 비교 ──
+                dcc.Tab(label='PD vs Healthy', className='tab',
+                        selected_className='tab--selected', children=[
+                    html.Div(className='tab-content', children=[
+                        _tab_desc('PD군과 Healthy군의 센서 지표를 비교합니다. '
+                                  '선택된 환자(★)가 어느 분포에 위치하는지 확인하여 '
+                                  '객관적 movement interpretation 근거를 제공합니다.'),
+                        html.Div(className='inline-task-selector', children=[
+                            html.Label('Task', className='inline-label'),
+                            dcc.Dropdown(
+                                id='group-task-dropdown',
+                                options=task_options,
+                                value='TouchNose',
+                                clearable=False,
+                                style={'width': '200px', 'color': '#2c3e50'},
+                            ),
+                            html.Label('Metric', className='inline-label',
+                                       style={'marginLeft': '16px'}),
+                            dcc.Dropdown(
+                                id='group-metric-dropdown',
+                                options=[
+                                    {'label': 'Accel RMS', 'value': 'accel_rms'},
+                                    {'label': 'Gyro RMS', 'value': 'gyro_rms'},
+                                    {'label': 'Accel Variability', 'value': 'accel_std'},
+                                    {'label': 'Gyro Variability', 'value': 'gyro_std'},
+                                ],
+                                value='accel_rms',
+                                clearable=False,
+                                style={'width': '200px', 'color': '#2c3e50'},
+                            ),
+                        ]),
+                        # Group comparison box plot
+                        html.Div(className='card', children=[
+                            dcc.Graph(id='group-box-chart'),
+                        ]),
+                        # Asymmetry scatter
+                        html.Div(className='card', children=[
+                            dcc.Graph(id='asymmetry-scatter-chart'),
+                        ]),
+                        # Task summary bar (all tasks overview)
+                        html.Div(className='card', children=[
+                            dcc.Graph(id='group-task-summary-chart'),
+                        ]),
+                    ]),
+                ]),
+
+                # ── 5. 영상 분석 ──
                 dcc.Tab(label='영상 분석', className='tab',
                         selected_className='tab--selected', children=[
                     html.Div(className='tab-content', children=[
-                        _tab_desc('Finger Tapping 영상(6대 카메라)에서 motion intensity를 '
-                                  '추출하여 좌/우 tapping 정량 비교와 multi-camera 관점 비교를 제공합니다.'),
+                        _tab_desc('Finger Tapping 영상(6대 카메라)에서 추출한 motion intensity로 '
+                                  '좌/우 tapping 정량 비교와 multi-camera 관점 비교를 제공합니다.'),
                         html.Div(className='inline-task-selector', children=[
                             html.Label('카메라 / 방향', className='inline-label'),
                             dcc.Dropdown(
