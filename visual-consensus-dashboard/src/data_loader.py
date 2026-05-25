@@ -350,6 +350,111 @@ def _estimate_fs(ts_df):
     return 1.0 / dt
 
 
+# Matching-aligned tasks (from matching methodology: Entrainment + Relaxed)
+MATCHING_TASKS = ['Entrainment', 'Relaxed']
+# Features used in bilateral motor distance
+MATCHING_FEATURES = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
+
+
+@lru_cache(maxsize=1)
+def compute_proximity_scores():
+    """Compute matching-aligned proximity for all subjects.
+
+    Uses the same methodology as the TULIP→PADS matching:
+    - Only Entrainment + Relaxed tasks
+    - Z-score normalized features
+    - Euclidean distance to PD centroid vs Healthy centroid
+    - Score = d_healthy / (d_healthy + d_pd) × 100
+      → 100 = very PD-like, 0 = very Healthy-like
+
+    Returns: dict {tulip_id: {score, d_pd, d_healthy, per_feature: {...}}}
+    """
+    fc = build_feature_cache()
+    patients = load_patients()
+    cond_map = dict(zip(patients['tulip_id'], patients['condition']))
+
+    # Filter to matching tasks only
+    match_data = fc[fc.task.isin(MATCHING_TASKS)].copy()
+    if match_data.empty:
+        return {}
+
+    # Build per-subject feature vector: mean of (L+R) for each feature on matching tasks
+    subject_vectors = {}
+    for tulip_id in match_data['tulip_id'].unique():
+        subj = match_data[match_data.tulip_id == tulip_id]
+        vec = []
+        for feat in MATCHING_FEATURES:
+            # L and R separately (bilateral: L↔L, R↔R)
+            for wrist in ['L', 'R']:
+                vals = subj[subj.wrist == wrist][feat].values
+                vec.append(np.mean(vals) if len(vals) > 0 else 0.0)
+        subject_vectors[tulip_id] = np.array(vec)
+
+    if not subject_vectors:
+        return {}
+
+    # Identify confirmed groups (exclude NEW_CASES)
+    pd_vecs = []
+    healthy_vecs = []
+    for tid, vec in subject_vectors.items():
+        cond = cond_map.get(tid, 'Unknown')
+        group = get_group_label(tid, cond)
+        if group == 'PD':
+            pd_vecs.append(vec)
+        elif group == 'Healthy':
+            healthy_vecs.append(vec)
+
+    if not pd_vecs or not healthy_vecs:
+        return {}
+
+    pd_vecs = np.array(pd_vecs)
+    healthy_vecs = np.array(healthy_vecs)
+
+    # Z-score normalize using all confirmed subjects
+    all_confirmed = np.vstack([pd_vecs, healthy_vecs])
+    mean_vec = np.mean(all_confirmed, axis=0)
+    std_vec = np.std(all_confirmed, axis=0)
+    std_vec[std_vec == 0] = 1.0  # avoid division by zero
+
+    # Centroids in z-space
+    pd_centroid = np.mean((pd_vecs - mean_vec) / std_vec, axis=0)
+    healthy_centroid = np.mean((healthy_vecs - mean_vec) / std_vec, axis=0)
+
+    # Compute distance-based proximity for each subject
+    results = {}
+    for tid, vec in subject_vectors.items():
+        z_vec = (vec - mean_vec) / std_vec
+        d_pd = np.sqrt(np.sum((z_vec - pd_centroid) ** 2))
+        d_healthy = np.sqrt(np.sum((z_vec - healthy_centroid) ** 2))
+        total_d = d_pd + d_healthy
+        # Score: closer to PD = higher score
+        score = (d_healthy / total_d * 100) if total_d > 0 else 50.0
+
+        # Per-feature breakdown (for each feature, which centroid is closer)
+        per_feature = {}
+        feat_idx = 0
+        for feat in MATCHING_FEATURES:
+            feat_d_pd = 0
+            feat_d_healthy = 0
+            for _ in ['L', 'R']:
+                feat_d_pd += (z_vec[feat_idx] - pd_centroid[feat_idx]) ** 2
+                feat_d_healthy += (z_vec[feat_idx] - healthy_centroid[feat_idx]) ** 2
+                feat_idx += 1
+            feat_d_pd = np.sqrt(feat_d_pd)
+            feat_d_healthy = np.sqrt(feat_d_healthy)
+            feat_total = feat_d_pd + feat_d_healthy
+            per_feature[feat] = (feat_d_healthy / feat_total * 100) if feat_total > 0 else 50.0
+
+        results[tid] = {
+            'score': float(score),
+            'd_pd': float(d_pd),
+            'd_healthy': float(d_healthy),
+            'per_feature': per_feature,
+        }
+
+    return results
+
+
 @lru_cache(maxsize=1)
 def build_group_stats():
     """Precompute per-subject per-task sensor RMS stats for group comparison.

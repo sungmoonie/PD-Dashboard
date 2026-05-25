@@ -830,7 +830,10 @@ GROUP_COLORS_EXT = {
 
 
 def _calc_proximity_score(patient_val, healthy_mean, pd_mean):
-    """Calculate 0-100 proximity: 0=Healthy, 100=PD."""
+    """Fallback: linear interpolation proximity. 0=Healthy, 100=PD.
+    NOTE: For overall scores, use compute_proximity_scores() which uses
+    matching-aligned methodology (Entrainment+Relaxed, z-score, Euclidean distance).
+    """
     if pd_mean == healthy_mean:
         return 50.0
     score = (patient_val - healthy_mean) / (pd_mean - healthy_mean) * 100
@@ -1071,58 +1074,57 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
 
 
 def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
-    """Overall proximity gauge: how close is this patient to PD vs Healthy.
+    """Matching-aligned proximity gauge.
 
-    Shows a clear visual indicator combining all features and tasks.
+    Uses the same methodology as TULIP→PADS matching:
+    - Entrainment + Relaxed tasks only (bilateral motor distance proxy)
+    - Z-score normalized features (tremor_power, amplitude, rhythm_irreg, jerk)
+    - Euclidean distance to PD centroid vs Healthy centroid
+    - Score = d_healthy / (d_healthy + d_pd) × 100
     """
     if not highlight_tulip:
         return _empty_fig('환자를 선택하세요')
 
-    df = group_stats_df.copy()
-    # Merge feature data with group
-    group_map = df[['tulip_id', 'group']].drop_duplicates()
-    merged = feature_df.merge(group_map, on='tulip_id', how='left')
+    from src.data_loader import compute_proximity_scores, MATCHING_FEATURES
 
-    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
-    scores = []
+    prox_data = compute_proximity_scores()
+    if highlight_tulip not in prox_data:
+        return _empty_fig('Proximity 계산 불가')
 
-    for feat in features:
-        h_mean = merged[merged.group == 'Healthy'][feat].mean()
-        p_mean = merged[merged.group == 'PD'][feat].mean()
-        pat_val = merged[merged.tulip_id == highlight_tulip][feat].mean()
-        scores.append(_calc_proximity_score(pat_val, h_mean, p_mean))
-
-    # Also include accel_rms across tasks
-    h_rms = df[df.group == 'Healthy']['accel_rms'].mean()
-    p_rms = df[df.group == 'PD']['accel_rms'].mean()
-    pat_rms = df[df.tulip_id == highlight_tulip]['accel_rms'].mean()
-    scores.append(_calc_proximity_score(pat_rms, h_rms, p_rms))
-
-    overall = np.mean(scores)
+    pat_prox = prox_data[highlight_tulip]
+    overall = pat_prox['score']
+    per_feature = pat_prox['per_feature']
 
     fig = go.Figure()
 
-    # Gauge-like horizontal bar
+    # Gauge-like horizontal bar (overall)
     fig.add_trace(go.Bar(
-        x=[100], y=[''], orientation='h',
-        marker=dict(color='#fed7d7'), showlegend=False,
-        base=0, width=0.5,
+        x=[100], y=['종합'], orientation='h',
+        marker=dict(color='#edf2f7'), showlegend=False,
+        base=0, width=0.6,
     ))
     fig.add_trace(go.Bar(
-        x=[overall], y=[''], orientation='h',
+        x=[overall], y=['종합'], orientation='h',
         marker=dict(
             color='#805ad5' if 40 <= overall <= 60
             else '#e53e3e' if overall > 60
             else '#38a169',
         ),
-        showlegend=False, base=0, width=0.5,
-        text=f'{overall:.0f}%', textposition='inside',
-        textfont=dict(size=18, color='white'),
+        showlegend=False, base=0, width=0.6,
+        text=f'{overall:.1f}%', textposition='inside',
+        textfont=dict(size=16, color='white'),
     ))
 
     # Feature-wise breakdown
-    feat_names = ['Tremor', 'Amplitude', 'Rhythm', 'Jerk', 'Movement']
-    for i, (name, score) in enumerate(zip(feat_names, scores)):
+    feat_display = {
+        'tremor_power': 'Tremor (4-12Hz)',
+        'amplitude': 'Movement Amp.',
+        'rhythm_irreg': 'Rhythm Irreg.',
+        'jerk': 'Mean Jerk',
+    }
+    for feat in MATCHING_FEATURES:
+        score = per_feature.get(feat, 50)
+        name = feat_display.get(feat, feat)
         color = '#e53e3e' if score > 60 else '#38a169' if score < 40 else '#805ad5'
         fig.add_trace(go.Bar(
             x=[score], y=[name], orientation='h',
@@ -1136,15 +1138,18 @@ def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
                   annotation_text='경계선', annotation_position='top')
 
     closer_to = 'PD' if overall > 50 else 'Healthy'
+    d_info = f'(d_PD={pat_prox["d_pd"]:.2f}, d_Healthy={pat_prox["d_healthy"]:.2f})'
     fig.update_layout(
         title=dict(
-            text=f'종합 PD 유사도: <b>{overall:.0f}%</b> → <b>{closer_to}</b>에 가까움',
+            text=(f'종합 PD 유사도: <b>{overall:.1f}%</b> → <b>{closer_to}</b>에 가까움<br>'
+                  f'<span style="font-size:11px;color:#718096">'
+                  f'근거: Entrainment+Relaxed bilateral z-score distance {d_info}</span>'),
             font=dict(size=15),
         ),
         xaxis=dict(title='← Healthy (0%)        PD (100%) →',
                    range=[0, 100], gridcolor='#edf2f7', dtick=25),
         yaxis=dict(autorange='reversed'),
-        height=280,
+        height=300,
         plot_bgcolor='white', paper_bgcolor='white',
         font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
         margin=dict(l=80, r=20, t=60, b=50),

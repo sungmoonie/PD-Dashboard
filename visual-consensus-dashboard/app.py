@@ -323,21 +323,17 @@ def update_summary(tulip_id):
     if not tulip_id:
         return '', '', _empty_fig(), ''
 
-    from src.figures import _calc_proximity_score
+    from src.data_loader import compute_proximity_scores, MATCHING_FEATURES
     from src.feature_engineering import calc_asymmetry_index
     import numpy as np_local
 
-    # Calculate overall proximity
-    group_map = group_stats[['tulip_id', 'group']].drop_duplicates()
-    merged = feature_cache.merge(group_map, on='tulip_id', how='left')
-
-    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
-    scores = {}
-    for feat in features:
-        h_mean = merged[merged.group == 'Healthy'][feat].mean()
-        p_mean = merged[merged.group == 'PD'][feat].mean()
-        pat_val = merged[merged.tulip_id == tulip_id][feat].mean()
-        scores[feat] = _calc_proximity_score(pat_val, h_mean, p_mean)
+    # Use matching-aligned proximity
+    prox_all = compute_proximity_scores()
+    pat_prox = prox_all.get(tulip_id, {})
+    overall = pat_prox.get('score', 50.0)
+    per_feature = pat_prox.get('per_feature', {})
+    d_pd = pat_prox.get('d_pd', 0)
+    d_healthy = pat_prox.get('d_healthy', 0)
 
     # Asymmetry score
     subj = feature_cache[feature_cache.tulip_id == tulip_id]
@@ -350,7 +346,6 @@ def update_summary(tulip_id):
             asym_vals.append(calc_asymmetry_index(lv[0], rv[0]))
     mean_asym = np_local.mean(asym_vals) if asym_vals else 0
 
-    overall = np_local.mean(list(scores.values()))
     closer = 'PD' if overall > 50 else 'Healthy'
     is_new = tulip_id in NEW_CASES
 
@@ -363,17 +358,22 @@ def update_summary(tulip_id):
                     style={'color': verdict_color, 'marginBottom': '8px'}),
             html.P(f'PD 유사도: {overall:.1f}% | 평균 비대칭: {mean_asym:.3f}',
                    style={'fontSize': '14px', 'color': '#4a5568'}),
-            html.P('근거: tremor power, amplitude, rhythm irregularity, jerk, '
-                   'bilateral asymmetry를 종합하여 확정 PD/Healthy군 평균과의 거리 기반 산출',
-                   style={'fontSize': '12px', 'color': '#718096', 'marginTop': '8px'}),
+            html.P(f'd(PD centroid)={d_pd:.2f}, d(Healthy centroid)={d_healthy:.2f}',
+                   style={'fontSize': '12px', 'color': '#718096'}),
+            html.P('방법: Entrainment+Relaxed task의 bilateral feature (tremor, amp, rhythm, jerk) '
+                   'z-score 정규화 후 확정 PD/Healthy centroid까지 Euclidean distance 비교',
+                   style={'fontSize': '11px', 'color': '#a0aec0', 'marginTop': '4px'}),
         ], className='verdict-box')
     else:
         row = patients_df[patients_df.tulip_id == tulip_id]
         condition = row.iloc[0]['condition'] if not row.empty else '—'
         verdict = html.Div([
             html.H2(f'확정: {condition}', style={'color': '#2c3e50'}),
-            html.P(f'Reference patient — PD 유사도: {overall:.1f}%'),
+            html.P(f'Reference — PD 유사도: {overall:.1f}% '
+                   f'(d_PD={d_pd:.2f}, d_Healthy={d_healthy:.2f})'),
         ], className='verdict-box')
+
+    scores = per_feature
 
     # Key findings
     finding_items = []
