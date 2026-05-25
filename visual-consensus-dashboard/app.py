@@ -40,12 +40,18 @@ app = Dash(
 server = app.server
 app.layout = create_layout()
 
-# ── Video streaming with range request support ───────────────
+# ── Video streaming ──────────────────────────────────────────
 VIDEO_BASE = os.path.dirname(os.path.abspath(__file__))
 VIDEO_BASE = os.path.dirname(VIDEO_BASE)  # 시각화수업/
 VIDEO_MAP = {
     'finger_tapping_left': '7. Finger_tapping_left',
     'finger_tapping_right': '8. FInger_tapping_right',
+}
+# GitHub raw URL fallback for Vercel deployment (videos excluded from bundle)
+GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/sungmoonie/PD-Dashboard/main'
+GITHUB_VIDEO_MAP = {
+    'finger_tapping_left': '7.%20Finger_tapping_left',
+    'finger_tapping_right': '8.%20FInger_tapping_right',
 }
 
 
@@ -55,29 +61,38 @@ def stream_video(folder, camera):
     if not real_folder:
         return 'Not found', 404
     path = os.path.join(VIDEO_BASE, real_folder, camera)
-    if not os.path.exists(path):
-        return 'Not found', 404
 
-    file_size = os.path.getsize(path)
-    range_header = request.headers.get('Range')
+    # Local file exists → stream directly
+    if os.path.exists(path):
+        file_size = os.path.getsize(path)
+        range_header = request.headers.get('Range')
 
-    if range_header:
-        m = re.search(r'bytes=(\d+)-(\d*)', range_header)
-        start = int(m.group(1))
-        end = int(m.group(2)) if m.group(2) else file_size - 1
-        length = end - start + 1
+        if range_header:
+            m = re.search(r'bytes=(\d+)-(\d*)', range_header)
+            start = int(m.group(1))
+            end = int(m.group(2)) if m.group(2) else file_size - 1
+            length = end - start + 1
 
-        with open(path, 'rb') as f:
-            f.seek(start)
-            data = f.read(length)
+            with open(path, 'rb') as f:
+                f.seek(start)
+                data = f.read(length)
 
-        resp = Response(data, 206, mimetype='video/mp4')
-        resp.headers['Content-Range'] = f'bytes {start}-{end}/{file_size}'
-        resp.headers['Accept-Ranges'] = 'bytes'
-        resp.headers['Content-Length'] = length
-        return resp
-    else:
-        return send_file(path, mimetype='video/mp4')
+            resp = Response(data, 206, mimetype='video/mp4')
+            resp.headers['Content-Range'] = f'bytes {start}-{end}/{file_size}'
+            resp.headers['Accept-Ranges'] = 'bytes'
+            resp.headers['Content-Length'] = length
+            return resp
+        else:
+            return send_file(path, mimetype='video/mp4')
+
+    # Vercel: local file missing → redirect to GitHub raw URL
+    gh_folder = GITHUB_VIDEO_MAP.get(folder)
+    if gh_folder:
+        from flask import redirect
+        github_url = f'{GITHUB_RAW_BASE}/{gh_folder}/{camera}'
+        return redirect(github_url, code=302)
+
+    return 'Not found', 404
 
 
 # ══════════════════════════════════════════════════════════════

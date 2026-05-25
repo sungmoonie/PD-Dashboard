@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "visual-consensus-dashboard/api/index.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb"
+      }
+    },
+    {
+      "src": "visual-consensus-dashboard/assets/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/assets/(.*)",
+      "dest": "visual-consensus-dashboard/assets/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "visual-consensus-dashboard/api/index.py"
+    }
+  ]
+}

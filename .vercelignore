@@ -1,0 +1,9 @@
+# Large video files - exclude from deployment
+7. Finger_tapping_left/
+8. FInger_tapping_right/
+
+# Dev files
+.DS_Store
+.git
+analysis_plan.md
+visual_consensus_dashboard_plan.md
