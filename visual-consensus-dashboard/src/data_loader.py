@@ -255,11 +255,16 @@ def get_subject_list():
 
 
 def get_task_list():
-    """Return dropdown options for sensor tasks."""
-    return [
-        {'label': TASK_LABELS_KR.get(t, t), 'value': t}
-        for t in SENSOR_TASKS
-    ]
+    """Return dropdown options — alignment tasks first, then others."""
+    alignment = []
+    others = []
+    for t in SENSOR_TASKS:
+        label = TASK_LABELS_KR.get(t, t)
+        if t in MATCHING_TASKS:
+            alignment.append({'label': f'★ {label} (alignment)', 'value': t})
+        else:
+            others.append({'label': f'  {label}', 'value': t})
+    return alignment + others
 
 
 def get_subject_list_labelfree():

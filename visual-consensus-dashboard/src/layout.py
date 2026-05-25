@@ -198,7 +198,7 @@ def build_tab_comparison():
         html.Div([
             html.Label('Task (아래 차트에 적용):', className='inline-label'),
             dcc.Dropdown(id='comp-task-dropdown', options=task_options,
-                         value='TouchNose', clearable=False, className='inline-dropdown'),
+                         value='Entrainment', clearable=False, className='inline-dropdown'),
             html.Label('Metric:', className='inline-label'),
             dcc.Dropdown(id='comp-metric-dropdown', options=[
                 {'label': 'Accel RMS', 'value': 'accel_rms'},
@@ -224,7 +224,7 @@ def build_tab_sensor():
         html.Div([
             html.Label('Task:', className='inline-label'),
             dcc.Dropdown(id='sensor-task-dropdown', options=task_options,
-                         value='TouchNose', clearable=False, className='inline-dropdown'),
+                         value='Entrainment', clearable=False, className='inline-dropdown'),
         ], className='controls-row'),
         # Spectral Fingerprint
         html.Div([
@@ -273,7 +273,7 @@ def build_tab_asymmetry():
         html.Div([
             html.Label('Task (아래 차트에 적용):', className='inline-label'),
             dcc.Dropdown(id='asym-task-dropdown', options=task_options,
-                         value='TouchNose', clearable=False, className='inline-dropdown'),
+                         value='Entrainment', clearable=False, className='inline-dropdown'),
         ], className='controls-row'),
         html.Div([
             html.H3('좌/우 Waveform 비교', className='viz-title'),
