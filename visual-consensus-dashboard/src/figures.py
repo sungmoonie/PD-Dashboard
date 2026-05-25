@@ -535,6 +535,7 @@ def _compute_windowed_features(sig, fs, win_sec=2.0):
     rhythm = np.zeros(n_frames)
     amplitude = np.zeros(n_frames)
     jerk = np.zeros(n_frames)
+    tremor_freq_stability = np.zeros(n_frames)  # frequency consistency
 
     for i in range(n_frames):
         start = i * hop
@@ -547,20 +548,62 @@ def _compute_windowed_features(sig, fs, win_sec=2.0):
         amplitude[i] = np.sqrt(np.mean(frame ** 2))
         jerk[i] = calc_mean_jerk(frame, fs)
 
-    return times, tremor, rhythm, amplitude, jerk
+        # Tremor frequency stability: ratio of peak PSD in 4-6Hz vs 4-12Hz
+        if len(frame) >= 16:
+            frame_dc = frame - np.mean(frame)
+            fft_v = np.abs(np.fft.rfft(frame_dc)) ** 2
+            freqs = np.fft.rfftfreq(len(frame_dc), 1.0 / fs)
+            band_4_12 = fft_v[(freqs >= 4) & (freqs <= 12)].sum()
+            band_4_6 = fft_v[(freqs >= 4) & (freqs <= 6)].sum()
+            tremor_freq_stability[i] = band_4_6 / band_4_12 if band_4_12 > 0 else 0
+
+    return times, tremor, rhythm, amplitude, jerk, tremor_freq_stability
+
+
+def _generate_clinical_events(times, tremor_n, rhythm_n, amp_n, asym_n, saliency):
+    """Generate clinical event annotations from feature time series."""
+    events = []
+    n = min(len(times), len(saliency))
+
+    for i in range(n):
+        t = times[i]
+        if saliency[i] < 0.4:
+            continue
+        # Determine dominant contributor
+        contributors = {
+            'tremor': tremor_n[i] if i < len(tremor_n) else 0,
+            'rhythm': rhythm_n[i] if i < len(rhythm_n) else 0,
+            'amplitude': amp_n[i] if i < len(amp_n) else 0,
+            'asymmetry': asym_n[i] if i < len(asym_n) else 0,
+        }
+        top = sorted(contributors.items(), key=lambda x: -x[1])
+        dominant = top[0][0]
+
+        # Clinical interpretation
+        if dominant == 'tremor' and contributors['tremor'] > 0.6:
+            events.append((t, 'Possible tremor emergence', '#e53e3e'))
+        elif dominant == 'rhythm' and contributors['rhythm'] > 0.6:
+            events.append((t, 'Rhythm instability', '#dd6b20'))
+        elif dominant == 'asymmetry' and contributors['asymmetry'] > 0.6:
+            events.append((t, 'Motor asymmetry increase', '#805ad5'))
+        elif dominant == 'amplitude' and contributors['amplitude'] > 0.7:
+            events.append((t, 'High motor activity', '#2b6cb0'))
+        elif saliency[i] > 0.7:
+            events.append((t, 'Multiple abnormality convergence', '#c53030'))
+
+    # Deduplicate nearby events (within 2s)
+    filtered = []
+    for ev in events:
+        if not filtered or abs(ev[0] - filtered[-1][0]) > 2.0:
+            filtered.append(ev)
+    return filtered
 
 
 def make_motor_landscape(tulip_id, task):
-    """Clinical Motor Event Landscape — multi-layer temporal pathology view.
+    """Clinical Motor Event Landscape — temporal pathology interpretation.
 
-    Layers:
-    1. Clinical Saliency Skyline (top) — combined abnormality peaks
-    2. Tremor Ribbon — 4-12Hz power persistence
-    3. Rhythm Breakdown — interval regularity
-    4. Amplitude Dynamics — movement strength evolution
-    5. Bilateral Asymmetry Field — L/R difference over time
-
-    NOT raw waveforms. Movement pathology topology.
+    NOT feature visualization. Movement pathology storytelling.
+    Each layer narrates a different aspect of motor deterioration.
     """
     from src.data_loader import load_timeseries, _estimate_fs, TASK_LABELS_KR
 
@@ -572,39 +615,43 @@ def make_motor_landscape(tulip_id, task):
 
     # Compute features for both sides
     layers = {}
-    for side, ts, label in [('L', left_ts, 'Left'), ('R', right_ts, 'Right')]:
+    for side, ts in [('L', left_ts), ('R', right_ts)]:
         if ts.empty:
             continue
         sig = ts['accel_mag'].values
         fs = _estimate_fs(ts)
-        times, tremor, rhythm, amplitude, jerk_arr = _compute_windowed_features(sig, fs)
+        times, tremor, rhythm, amplitude, jerk_arr, freq_stab = _compute_windowed_features(sig, fs)
         layers[side] = {
             'times': times, 'tremor': tremor, 'rhythm': rhythm,
-            'amplitude': amplitude, 'jerk': jerk_arr, 'fs': fs,
+            'amplitude': amplitude, 'jerk': jerk_arr,
+            'freq_stability': freq_stab, 'fs': fs,
         }
 
     if not layers:
         return _empty_fig('Feature computation failed')
 
-    # Use primary side (whichever has data, prefer L)
     primary = layers.get('L', layers.get('R'))
     times = primary['times']
     n = len(times)
 
-    # Compute bilateral asymmetry over time (if both sides exist)
-    if 'L' in layers and 'R' in layers:
-        min_len = min(len(layers['L']['amplitude']), len(layers['R']['amplitude']))
-        l_amp = layers['L']['amplitude'][:min_len]
-        r_amp = layers['R']['amplitude'][:min_len]
+    # Bilateral amplitude asymmetry over time
+    has_bilateral = 'L' in layers and 'R' in layers
+    if has_bilateral:
+        ml = min(len(layers['L']['amplitude']), len(layers['R']['amplitude']))
+        l_amp = layers['L']['amplitude'][:ml]
+        r_amp = layers['R']['amplitude'][:ml]
         mean_amp = (l_amp + r_amp) / 2
         mean_amp[mean_amp == 0] = 1e-8
         asym_temporal = np.abs(l_amp - r_amp) / mean_amp
-        asym_times = times[:min_len]
+        asym_times = times[:ml]
+        # Determine dominant side
+        dominant_side = 'Left' if np.mean(l_amp) > np.mean(r_amp) else 'Right'
     else:
         asym_temporal = np.zeros(n)
         asym_times = times
+        dominant_side = 'N/A'
 
-    # Normalize each layer to 0-1
+    # Normalize
     def _norm(arr):
         mx = arr.max()
         return arr / mx if mx > 0 else arr
@@ -613,101 +660,150 @@ def make_motor_landscape(tulip_id, task):
     rhythm_n = _norm(primary['rhythm'])
     amp_n = _norm(primary['amplitude'])
     jerk_n = _norm(primary['jerk'])
-    asym_n = _norm(asym_temporal) if len(asym_temporal) > 0 else np.zeros(n)
+    asym_n = _norm(asym_temporal)
 
-    # Clinical Saliency Score
+    # Saliency with decomposition
     w = _LANDSCAPE_WEIGHTS
-    min_len_all = min(len(tremor_n), len(rhythm_n), len(amp_n), len(jerk_n), len(asym_n))
-    saliency = (
-        w['tremor'] * tremor_n[:min_len_all]
-        + w['rhythm'] * rhythm_n[:min_len_all]
-        + w['amplitude'] * amp_n[:min_len_all]
-        + w['jerk'] * jerk_n[:min_len_all]
-        + w['asymmetry'] * asym_n[:min_len_all]
-    )
-    saliency = saliency / saliency.max() if saliency.max() > 0 else saliency
-    sal_times = times[:min_len_all]
+    ml_all = min(len(tremor_n), len(rhythm_n), len(amp_n), len(jerk_n), len(asym_n))
+    s_tremor = w['tremor'] * tremor_n[:ml_all]
+    s_rhythm = w['rhythm'] * rhythm_n[:ml_all]
+    s_amp = w['amplitude'] * amp_n[:ml_all]
+    s_jerk = w['jerk'] * jerk_n[:ml_all]
+    s_asym = w['asymmetry'] * asym_n[:ml_all]
+    saliency = s_tremor + s_rhythm + s_amp + s_jerk + s_asym
+    sal_max = saliency.max()
+    if sal_max > 0:
+        saliency = saliency / sal_max
+        s_tremor = s_tremor / sal_max
+        s_rhythm = s_rhythm / sal_max
+        s_amp = s_amp / sal_max
+        s_jerk = s_jerk / sal_max
+        s_asym = s_asym / sal_max
+    sal_times = times[:ml_all]
 
-    # Build multi-row subplot
+    # Generate clinical event annotations
+    events = _generate_clinical_events(sal_times, tremor_n[:ml_all],
+                                        rhythm_n[:ml_all], amp_n[:ml_all],
+                                        asym_n[:ml_all], saliency)
+
+    # Build figure
     fig = make_subplots(
         rows=5, cols=1,
         row_heights=[0.25, 0.2, 0.2, 0.2, 0.15],
         shared_xaxes=True,
         vertical_spacing=0.03,
         subplot_titles=[
-            'Clinical Saliency Skyline',
-            'Tremor Persistence (4-12 Hz)',
-            'Rhythm Stability',
-            'Movement Amplitude',
-            'Bilateral Asymmetry',
+            'Clinical Saliency Skyline — Movement Abnormality Intensity',
+            'Tremor Persistence (4-12 Hz power + frequency stability)',
+            'Timing Instability (rhythm irregularity)',
+            'Movement Amplitude (progressive decay detection)',
+            f'Amplitude Asymmetry (|L-R|/mean, dominant: {dominant_side})',
         ],
     )
 
-    # Row 1: Saliency Skyline (Manhattan-inspired)
-    # Color peaks by intensity
+    # ── Row 1: Saliency with decomposition hover ──
     colors = np.where(saliency > 0.7, '#e53e3e',
              np.where(saliency > 0.4, '#dd6b20', '#38a169'))
+
+    # Build per-bar hover with decomposition
+    hover_texts = []
+    for i in range(ml_all):
+        parts = [
+            f'Tremor: {s_tremor[i]*100:.0f}%',
+            f'Rhythm: {s_rhythm[i]*100:.0f}%',
+            f'Amplitude: {s_amp[i]*100:.0f}%',
+            f'Jerk: {s_jerk[i]*100:.0f}%',
+            f'Asymmetry: {s_asym[i]*100:.0f}%',
+        ]
+        top_contrib = max(
+            ('Tremor', s_tremor[i]), ('Rhythm', s_rhythm[i]),
+            ('Amplitude', s_amp[i]), ('Jerk', s_jerk[i]),
+            ('Asymmetry', s_asym[i]), key=lambda x: x[1]
+        )
+        hover_texts.append(
+            f'<b>Saliency: {saliency[i]:.3f}</b> at {sal_times[i]:.1f}s<br><br>'
+            f'<b>Decomposition:</b><br>'
+            + '<br>'.join(parts)
+            + f'<br><br><b>Primary driver: {top_contrib[0]}</b><br><br>'
+            f'<i>Higher bars indicate segments with<br>'
+            f'stronger motor abnormality evidence.<br>'
+            f'This is NOT a diagnostic score.</i>'
+        )
+
     fig.add_trace(go.Bar(
         x=sal_times, y=saliency,
-        marker=dict(color=list(colors), opacity=0.8),
+        marker=dict(color=list(colors), opacity=0.85),
         showlegend=False,
-        hovertemplate=(
-            '<b>Clinical Saliency</b><br>'
-            'Time: %{x:.1f}s<br>'
-            'Score: %{y:.3f}<br><br>'
-            '<i>S(t) = w_tremor×tremor + w_rhythm×rhythm<br>'
-            '+ w_amp×amplitude + w_jerk×jerk + w_asym×asymmetry<br>'
-            'Weights: tremor=1.5, rhythm=1.3, amp=1.0, jerk=1.0, asym=1.2<br>'
-            'Higher peaks = stronger motor abnormality evidence</i>'
-            '<extra></extra>'
-        ),
+        hovertemplate='%{customdata}<extra></extra>',
+        customdata=hover_texts,
     ), row=1, col=1)
     fig.add_hline(y=0.7, line_dash='dot', line_color='#e53e3e', line_width=1, row=1, col=1)
     fig.add_hline(y=0.4, line_dash='dot', line_color='#dd6b20', line_width=1, row=1, col=1)
 
-    # Row 2: Tremor Ribbon
+    # Clinical event annotations on saliency
+    for t, label, color in events:
+        fig.add_annotation(
+            x=t, y=1.02, xref='x', yref='y domain',
+            text=label, showarrow=True, arrowhead=2, arrowsize=0.8,
+            arrowcolor=color, font=dict(size=9, color=color),
+            bgcolor='rgba(255,255,255,0.85)', bordercolor=color,
+            borderwidth=1, borderpad=2, ax=0, ay=-25,
+            row=1, col=1,
+        )
+
+    # ── Row 2: Tremor Ribbon with frequency stability ──
+    freq_stab = primary['freq_stability']
+    # Color by frequency stability: stable 4-6Hz = deeper red
+    tremor_colors = [
+        f'rgba(229,62,62,{0.3 + 0.7*freq_stab[i]:.2f})' if i < len(freq_stab) else 'rgba(229,62,62,0.3)'
+        for i in range(len(times))
+    ]
     fig.add_trace(go.Scatter(
         x=times, y=primary['tremor'],
         mode='lines', fill='tozeroy',
-        line=dict(color='#e53e3e', width=1),
-        fillcolor='rgba(229,62,62,0.3)',
+        line=dict(color='#e53e3e', width=1.5),
+        fillcolor='rgba(229,62,62,0.2)',
         showlegend=False,
-        hovertemplate=(
-            '<b>Tremor Power</b><br>'
-            'Time: %{x:.1f}s<br>'
-            'Power: %{y:.4f}<br><br>'
-            '<i>FFT-based PSD integrated over 4-12 Hz<br>'
-            'Persistent high values suggest parkinsonian tremor</i>'
-            '<extra></extra>'
-        ),
+        hovertemplate=[
+            f'<b>Tremor Persistence</b><br>'
+            f'Time: {times[i]:.1f}s<br>'
+            f'Power: {primary["tremor"][i]:.4f}<br>'
+            f'4-6Hz ratio: {freq_stab[i]*100:.0f}%<br><br>'
+            f'<i>{"Frequency-stable (PD-like)" if freq_stab[i]>0.6 else "Broadband (less specific)"}<br>'
+            f'Persistent 4-6Hz tremor = hallmark PD rest tremor<br>'
+            f'Higher 4-6Hz ratio = more frequency-stable oscillation</i>'
+            f'<extra></extra>'
+            for i in range(len(times))
+        ],
     ), row=2, col=1)
-    # Add R side if available (lighter)
     if 'R' in layers:
         fig.add_trace(go.Scatter(
             x=layers['R']['times'], y=layers['R']['tremor'],
             mode='lines', line=dict(color='#fc8181', width=1, dash='dot'),
-            showlegend=False, opacity=0.5,
+            showlegend=False, opacity=0.4,
+            hoverinfo='skip',
         ), row=2, col=1)
 
-    # Row 3: Rhythm Stability (inverted: high = unstable)
+    # ── Row 3: Timing Instability (renamed from Rhythm Stability) ──
     fig.add_trace(go.Scatter(
         x=times, y=primary['rhythm'],
         mode='lines', fill='tozeroy',
-        line=dict(color='#dd6b20', width=1),
-        fillcolor='rgba(221,107,32,0.25)',
+        line=dict(color='#dd6b20', width=1.5),
+        fillcolor='rgba(221,107,32,0.2)',
         showlegend=False,
         hovertemplate=(
-            '<b>Rhythm Irregularity</b><br>'
+            '<b>Timing Instability</b><br>'
             'Time: %{x:.1f}s<br>'
             'CV: %{y:.4f}<br><br>'
-            '<i>Coefficient of variation of inter-peak intervals<br>'
-            'High values = rhythm breakdown / dysrhythmia<br>'
-            'Key indicator of bradykinesia</i>'
+            '<i>CV of inter-peak intervals in this window<br>'
+            'High CV = irregular movement timing<br>'
+            'Indicates rhythm breakdown / dysrhythmia<br>'
+            'Clinically associated with bradykinesia</i>'
             '<extra></extra>'
         ),
     ), row=3, col=1)
 
-    # Row 4: Amplitude Dynamics (look for progressive decay)
+    # ── Row 4: Amplitude with decay detection ──
     fig.add_trace(go.Scatter(
         x=times, y=primary['amplitude'],
         mode='lines+markers',
@@ -717,40 +813,47 @@ def make_motor_landscape(tulip_id, task):
         hovertemplate=(
             '<b>Movement Amplitude</b><br>'
             'Time: %{x:.1f}s<br>'
-            'RMS: %{y:.4f}<br><br>'
+            'RMS: %{y:.4f} g<br><br>'
             '<i>RMS of accelerometer magnitude<br>'
-            'Progressive decay = decrement sequence (PD hallmark)<br>'
-            'Stable = normal motor output</i>'
+            'Progressive decay = decrement sequence<br>'
+            '(PD hallmark in repetitive movements)<br>'
+            'Stable amplitude = preserved motor output</i>'
             '<extra></extra>'
         ),
     ), row=4, col=1)
-    # Trend line
     if len(times) > 2:
         z = np.polyfit(times, primary['amplitude'], 1)
         trend = np.polyval(z, times)
         slope_color = '#e53e3e' if z[0] < -0.001 else '#38a169'
+        slope_text = 'Declining (possible decrement)' if z[0] < -0.001 else 'Stable/increasing'
         fig.add_trace(go.Scatter(
             x=times, y=trend, mode='lines',
-            line=dict(color=slope_color, width=1, dash='dash'),
+            line=dict(color=slope_color, width=1.5, dash='dash'),
             showlegend=False,
-            hovertemplate=f'Trend slope: {z[0]:.4f}/s<extra></extra>',
+            hovertemplate=(
+                f'<b>Amplitude Trend</b><br>'
+                f'Slope: {z[0]:.4f} g/s<br>'
+                f'Interpretation: {slope_text}'
+                f'<extra></extra>'
+            ),
         ), row=4, col=1)
 
-    # Row 5: Bilateral Asymmetry Field
+    # ── Row 5: Amplitude Asymmetry ──
     if len(asym_temporal) > 0:
         fig.add_trace(go.Scatter(
             x=asym_times, y=asym_temporal,
             mode='lines', fill='tozeroy',
             line=dict(color='#805ad5', width=1.5),
-            fillcolor='rgba(128,90,213,0.25)',
+            fillcolor='rgba(128,90,213,0.2)',
             showlegend=False,
             hovertemplate=(
-                '<b>Bilateral Asymmetry</b><br>'
+                '<b>Amplitude Asymmetry</b><br>'
                 'Time: %{x:.1f}s<br>'
                 'Index: %{y:.3f}<br><br>'
-                '<i>|Left - Right| / mean(Left, Right)<br>'
-                'High values = lateralized motor involvement<br>'
-                'PD typically shows persistent unilateral dominance</i>'
+                '<i>|Left_RMS - Right_RMS| / mean(Left, Right)<br>'
+                f'Dominant side: {dominant_side}<br>'
+                'Persistent asymmetry suggests lateralized pathology<br>'
+                'Transient peaks may indicate task-specific compensation</i>'
                 '<extra></extra>'
             ),
         ), row=5, col=1)
@@ -762,27 +865,32 @@ def make_motor_landscape(tulip_id, task):
             text=f'Clinical Motor Event Landscape — {task_label}',
             font=dict(size=15),
         ),
-        height=700,
+        height=750,
         plot_bgcolor='white', paper_bgcolor='white',
-        font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
-        margin=dict(l=50, r=20, t=60, b=40),
+        font=dict(family='-apple-system, Segoe UI, sans-serif', size=11, color='#2c3e50'),
+        margin=dict(l=55, r=20, t=65, b=40),
     )
     fig.update_xaxes(title_text='Time (s)', row=5, col=1)
     fig.update_yaxes(title_text='Saliency', row=1, col=1)
     fig.update_yaxes(title_text='Power', row=2, col=1)
     fig.update_yaxes(title_text='CV', row=3, col=1)
     fig.update_yaxes(title_text='RMS (g)', row=4, col=1)
-    fig.update_yaxes(title_text='Asym.', row=5, col=1)
+    fig.update_yaxes(title_text='|L-R|/μ', row=5, col=1)
     return fig
 
 
 def make_bilateral_phase_space(tulip_id, task):
-    """Bilateral Phase Space — L vs R motor energy trajectory over time.
+    """Bilateral Phase Space — smoothed L vs R motor trajectory.
 
-    Healthy: stable diagonal trajectory.
-    PD: asymmetric orbit, drift toward one side.
+    Improvements:
+    - 3s smoothing windows (reduced spaghetti)
+    - Reference density clouds (PD/Healthy)
+    - Clear start/end with directional interpretation
     """
-    from src.data_loader import load_timeseries, _estimate_fs, TASK_LABELS_KR
+    from src.data_loader import (
+        load_timeseries, _estimate_fs, TASK_LABELS_KR,
+        build_group_stats, get_group_label, load_patients,
+    )
 
     left_ts = load_timeseries(tulip_id, task, 'LeftWrist')
     right_ts = load_timeseries(tulip_id, task, 'RightWrist')
@@ -790,71 +898,108 @@ def make_bilateral_phase_space(tulip_id, task):
     if left_ts.empty or right_ts.empty:
         return _empty_fig('Both L/R data required for phase space')
 
+    # Smoothed windows (3s for readability)
     fs_l = _estimate_fs(left_ts)
     fs_r = _estimate_fs(right_ts)
+    _, _, _, l_amp, _, _ = _compute_windowed_features(left_ts['accel_mag'].values, fs_l, win_sec=3.0)
+    times, _, _, r_amp, _, _ = _compute_windowed_features(right_ts['accel_mag'].values, fs_r, win_sec=3.0)
 
-    # Windowed RMS for both sides
-    _, _, _, l_amp, _ = _compute_windowed_features(left_ts['accel_mag'].values, fs_l, win_sec=1.0)
-    times, _, _, r_amp, _ = _compute_windowed_features(right_ts['accel_mag'].values, fs_r, win_sec=1.0)
+    ml = min(len(l_amp), len(r_amp))
+    l_amp, r_amp, times = l_amp[:ml], r_amp[:ml], times[:ml]
 
-    min_len = min(len(l_amp), len(r_amp))
-    l_amp = l_amp[:min_len]
-    r_amp = r_amp[:min_len]
-    times = times[:min_len]
-
-    # Color by time progression
     fig = go.Figure()
+    max_val = max(l_amp.max(), r_amp.max()) * 1.2
+
+    # Reference density clouds from confirmed subjects
+    gs = build_group_stats()
+    patients = load_patients()
+    cond_map = dict(zip(patients['tulip_id'], patients['condition']))
+    task_gs = gs[gs.task == task]
+
+    for group, color, fill in [('Healthy', '#38a169', 'rgba(56,161,105,0.08)'),
+                                ('PD', '#e53e3e', 'rgba(229,62,62,0.08)')]:
+        gd = task_gs[task_gs.group == group]
+        left_vals = gd[gd.wrist == 'Left']['accel_rms'].values
+        right_vals = gd[gd.wrist == 'Right']['accel_rms'].values
+        if len(left_vals) > 1 and len(right_vals) > 1:
+            l_mean, l_std = left_vals.mean(), left_vals.std()
+            r_mean, r_std = right_vals.mean(), right_vals.std()
+            # Ellipse approximation (±1SD)
+            theta = np.linspace(0, 2 * np.pi, 50)
+            ell_x = l_mean + l_std * np.cos(theta)
+            ell_y = r_mean + r_std * np.sin(theta)
+            fig.add_trace(go.Scatter(
+                x=ell_x, y=ell_y, mode='lines', fill='toself',
+                fillcolor=fill, line=dict(color=color, width=1, dash='dot'),
+                name=f'{group} region (±1SD)', opacity=0.6,
+                hoverinfo='skip',
+            ))
 
     # Symmetry line
-    max_val = max(l_amp.max(), r_amp.max()) * 1.1
     fig.add_trace(go.Scatter(
         x=[0, max_val], y=[0, max_val], mode='lines',
         line=dict(color='#e2e8f0', width=1, dash='dash'),
         name='Symmetry', hoverinfo='skip',
     ))
 
-    # Trajectory colored by time
+    # Smoothed trajectory with time color
     fig.add_trace(go.Scatter(
         x=l_amp, y=r_amp, mode='lines+markers',
         marker=dict(
-            size=6, color=times, colorscale='Viridis',
+            size=8, color=times, colorscale='Viridis',
             colorbar=dict(title='Time (s)', thickness=10, len=0.5),
-            line=dict(width=0.5, color='white'),
+            line=dict(width=1, color='white'),
         ),
-        line=dict(color='rgba(128,90,213,0.3)', width=1),
-        name='Trajectory',
+        line=dict(color='rgba(128,90,213,0.4)', width=2),
+        name='Movement trajectory',
         hovertemplate=(
-            '<b>Phase Space</b><br>'
+            '<b>Bilateral State</b><br>'
             'Time: %{marker.color:.1f}s<br>'
-            'Left motor energy: %{x:.4f}<br>'
-            'Right motor energy: %{y:.4f}<br><br>'
-            '<i>Diagonal = symmetric movement<br>'
-            'Drift from diagonal = lateralized asymmetry<br>'
-            'Unstable orbit = motor coordination instability</i>'
+            'Left energy: %{x:.4f} g<br>'
+            'Right energy: %{y:.4f} g<br><br>'
+            '<i>On diagonal = symmetric bilateral movement<br>'
+            'Above = right-dominant, Below = left-dominant<br>'
+            'Inside Healthy cloud = typical motor balance<br>'
+            'Inside PD cloud = PD-like asymmetric pattern</i>'
             '<extra></extra>'
         ),
     ))
 
-    # Start and end markers
+    # Start / End markers
     fig.add_trace(go.Scatter(
-        x=[l_amp[0]], y=[r_amp[0]], mode='markers',
+        x=[l_amp[0]], y=[r_amp[0]], mode='markers+text',
         marker=dict(size=14, color='#38a169', symbol='circle', line=dict(width=2, color='white')),
+        text=['Start'], textposition='bottom right', textfont=dict(size=9, color='#38a169'),
         name='Start', showlegend=True,
     ))
     fig.add_trace(go.Scatter(
-        x=[l_amp[-1]], y=[r_amp[-1]], mode='markers',
+        x=[l_amp[-1]], y=[r_amp[-1]], mode='markers+text',
         marker=dict(size=14, color='#e53e3e', symbol='square', line=dict(width=2, color='white')),
+        text=['End'], textposition='top left', textfont=dict(size=9, color='#e53e3e'),
         name='End', showlegend=True,
     ))
 
+    # Drift analysis
+    drift_l = l_amp[-1] - l_amp[0]
+    drift_r = r_amp[-1] - r_amp[0]
+    if abs(drift_l - drift_r) > 0.01:
+        drift_side = 'left-dominant' if drift_l > drift_r else 'right-dominant'
+        fig.add_annotation(
+            x=0.02, y=0.98, xref='paper', yref='paper',
+            text=f'Trajectory drift: {drift_side}',
+            showarrow=False, font=dict(size=10, color='#4a5568'),
+            bgcolor='rgba(255,255,255,0.8)',
+        )
+
     task_label = TASK_LABELS_KR.get(task, task)
     fig.update_layout(
-        title=dict(text=f'Bilateral Phase Space — {task_label}', font=dict(size=14)),
-        xaxis=dict(title='Left Motor Energy (RMS)', gridcolor='#edf2f7', range=[0, max_val]),
-        yaxis=dict(title='Right Motor Energy (RMS)', gridcolor='#edf2f7', range=[0, max_val]),
-        legend=dict(orientation='h', y=-0.12),
+        title=dict(text=f'Bilateral Phase Space — {task_label} (3s smoothed)',
+                   font=dict(size=14)),
+        xaxis=dict(title='Left Motor Energy (RMS g)', gridcolor='#edf2f7', range=[0, max_val]),
+        yaxis=dict(title='Right Motor Energy (RMS g)', gridcolor='#edf2f7', range=[0, max_val]),
+        legend=dict(orientation='h', y=-0.12, font=dict(size=10)),
     )
-    return _apply_defaults(fig, height=420)
+    return _apply_defaults(fig, height=450)
 
 
 # ══════════════════════════════════════════════════════════════
