@@ -2,3 +2,9 @@
 .git
 analysis_plan.md
 visual_consensus_dashboard_plan.md
+pd_dashboard_dev_spec.md
+
+# Large data/video directories
+7. Finger_tapping_left
+8. FInger_tapping_right
+visual-consensus-dashboard/assets/videos
