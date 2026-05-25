@@ -463,6 +463,66 @@ body {
     white-space: nowrap;
 }
 
+/* ===== NMS Symptom List ===== */
+.nms-symptom-list {
+    padding: 8px 0;
+}
+
+.nms-symptom-items {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.nms-symptom-item {
+    padding: 6px 12px;
+    background: #fed7d7;
+    color: #c53030;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+/* ===== Decision Badges ===== */
+.decision-badge-ht {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #c6f6d5;
+    color: #276749;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.decision-badge-pd {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #fed7d7;
+    color: #c53030;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.decision-badge-ddx {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #fefcbf;
+    color: #975a16;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* ===== Radio Items Inline ===== */
+.inline-task-selector input[type="radio"] {
+    margin-right: 4px;
+}
+
 /* ===== Loading State ===== */
 ._dash-loading {
     opacity: 0.5;

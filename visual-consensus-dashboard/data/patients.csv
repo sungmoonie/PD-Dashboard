@@ -1,6 +1,0 @@
-patient_id,group,age,sex,handedness,motor_score,non_motor_score
-P001,PD,68,F,right,72,41
-P002,PD,61,M,right,58,35
-P003,Healthy,59,F,left,12,8
-P004,Differential,65,M,right,43,22
-P005,PD,72,M,left,80,46
