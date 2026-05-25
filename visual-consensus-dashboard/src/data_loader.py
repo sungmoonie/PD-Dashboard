@@ -282,10 +282,12 @@ def get_subject_list_hybrid():
         tid = row['tulip_id']
         group = get_group_label(tid, row['condition'])
         if group == 'New':
-            label = f"★ {tid} — New Patient ({row['age']}y, {row['gender']})"
+            num = tid.replace('TULIP_', '')
+            label = f"★ Patient_{num} — New ({row['age']}y, {row['gender']})"
             new_options.append({'label': label, 'value': tid})
         else:
-            label = f"  {tid} — {group} ({row['age']}y, {row['gender']})"
+            num = tid.replace('TULIP_', '')
+            label = f"  Patient_{num} — {group} ({row['age']}y, {row['gender']})"
             confirmed_options.append({'label': label, 'value': tid})
     # New patients first, then confirmed sorted
     new_options.sort(key=lambda x: x['value'])

@@ -14,6 +14,13 @@ LAYOUT_DEFAULTS = dict(
 GROUP_COLORS = {'PD': '#e53e3e', 'Healthy': '#38a169', 'Other': '#d69e2e'}
 
 
+def _display_id(tulip_id):
+    """Convert TULIP_001 → Patient_001 for display."""
+    if not tulip_id:
+        return ''
+    return 'Patient_' + tulip_id.replace('TULIP_', '')
+
+
 def _apply_defaults(fig, height=370):
     fig.update_layout(**LAYOUT_DEFAULTS, height=height)
     return fig
@@ -300,7 +307,7 @@ def make_asymmetry_comparison(group_stats_df, task, highlight_tulip=None):
                 symbol=['star' if h else 'circle' for h in is_highlight],
                 line=dict(width=1, color='white'),
             ),
-            text=gd['tulip_id'].apply(lambda x: x.replace('TULIP_', 'T')),
+            text=gd['tulip_id'].apply(lambda x: 'P_' + x.replace('TULIP_', '')),
             textposition='top center', textfont=dict(size=8),
             name=group,
             hovertemplate='%{text}<br>Left: %{x:.4f}<br>Right: %{y:.4f}<extra></extra>',
@@ -1048,7 +1055,7 @@ def make_new_vs_group_box(group_stats_df, task, metric='accel_rms', highlight_tu
                 marker=dict(size=16, color='#805ad5', symbol='star',
                             line=dict(width=2, color='white')),
                 line=dict(color='#805ad5', width=2, dash='dash'),
-                name=f'★ {highlight_tulip}',
+                name=f'★ {_display_id(highlight_tulip)}',
                 hovertemplate=(
                     f'<b>★ {highlight_tulip}</b><br>'
                     f'Value: {pat_val:.4f}<br><br>'
@@ -1146,7 +1153,7 @@ def make_group_feature_comparison(feature_df, group_stats_df, highlight_tulip=No
                 mode='lines+markers',
                 line=dict(color='#805ad5', width=2, dash='dash'),
                 marker=dict(size=10, symbol='star', color='#805ad5'),
-                name=f'★ {highlight_tulip}' if i == 1 else None,
+                name=f'★ {_display_id(highlight_tulip)}' if i == 1 else None,
                 showlegend=(i == 1), legendgroup='patient',
                 hovertemplate=(
                     f'★ {highlight_tulip}<br>'
@@ -1224,7 +1231,7 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
                 line=dict(color='#805ad5', width=3),
                 marker=dict(size=11, symbol='star', color='#805ad5',
                             line=dict(width=2, color='white')),
-                name=f'★ {highlight_tulip}',
+                name=f'★ {_display_id(highlight_tulip)}',
             ))
 
             # Mark Layer A tasks (alignment evidence)
@@ -1303,12 +1310,13 @@ def make_asymmetry_scatter(group_stats_df, task, highlight_tulip=None):
         color = GROUP_COLORS_EXT[group]
         fig.add_trace(go.Scatter(
             x=gd['left_val'], y=gd['right_val'],
-            mode='markers',
+            mode='markers+text',
             marker=dict(size=9, color=color, opacity=0.7,
                         line=dict(width=1, color='white')),
             name=f'{group} ref.',
             hovertemplate='%{text}<br>L: %{x:.4f}<br>R: %{y:.4f}<extra></extra>',
-            text=gd['tulip_id'].apply(lambda x: x.replace('TULIP_', 'T')),
+            text=gd['tulip_id'].apply(lambda x: 'P_' + x.replace('TULIP_', '')),
+            textposition='top center', textfont=dict(size=8, color=color),
         ))
 
     # Selected patient
@@ -1320,17 +1328,18 @@ def make_asymmetry_scatter(group_stats_df, task, highlight_tulip=None):
             from src.feature_engineering import calc_asymmetry_index
             asym_idx = calc_asymmetry_index(l_val, r_val)
 
+            pat_label = 'Patient_' + highlight_tulip.replace('TULIP_', '')
             fig.add_trace(go.Scatter(
                 x=[l_val], y=[r_val],
                 mode='markers+text',
                 marker=dict(size=18, color='#805ad5', symbol='star',
                             line=dict(width=3, color='white')),
-                text=[f'★ {highlight_tulip}'],
+                text=[f'★ {pat_label}'],
                 textposition='top center',
                 textfont=dict(size=10, color='#805ad5'),
-                name=f'★ {highlight_tulip}',
+                name=f'★ {pat_label}',
                 hovertemplate=(
-                    f'<b>★ {highlight_tulip}</b><br>'
+                    f'<b>★ {pat_label}</b><br>'
                     f'Left: {l_val:.4f}<br>'
                     f'Right: {r_val:.4f}<br>'
                     f'Asymmetry Index: {asym_idx:.3f}<br><br>'
@@ -1506,7 +1515,7 @@ def make_asym_group_compare(group_stats_df, tulip_id):
             y=[val, val], mode='markers+lines',
             marker=dict(size=16, color='#805ad5', symbol='star', line=dict(width=2, color='white')),
             line=dict(color='#805ad5', width=2, dash='dash'),
-            name=f'★ {tulip_id} ({val:.3f})',
+            name=f'★ {_display_id(tulip_id)} ({val:.3f})',
         ))
     fig.update_layout(
         title=dict(text='Mean Asymmetry — Group Comparison', font=dict(size=14)),
@@ -1564,7 +1573,7 @@ def make_summary_radar(feature_df, group_stats_df, tulip_id):
                                    fill='toself', fillcolor='rgba(128,90,213,0.15)',
                                    line=dict(color='#805ad5', width=3),
                                    marker=dict(size=8, symbol='star', color='#805ad5'),
-                                   name=f'★ {tulip_id}'))
+                                   name=f'★ {_display_id(tulip_id)}'))
     fig.update_layout(
         polar=dict(radialaxis=dict(visible=True, range=[0, 1], gridcolor='#edf2f7')),
         title=dict(text=f'Motor Phenotype Radar — {tulip_id}', font=dict(size=14)),

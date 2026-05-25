@@ -181,40 +181,33 @@ def build_tab_comparison():
                    '진단 확률이 아닌 reference 유사도입니다.',
                    className='tab-description'),
         ]),
-        # Proximity Gauge (top — most important)
+        # ── Patient-level (no task selection needed) ──
         html.Div([
             dcc.Graph(id='proximity-gauge', config={'displayModeBar': False}),
         ], className='viz-block'),
-        # Controls
-        html.Div([
-            html.Div([
-                html.Label('Task:', className='inline-label'),
-                dcc.Dropdown(id='comp-task-dropdown', options=task_options,
-                             value='TouchNose', clearable=False, className='inline-dropdown'),
-            ], className='inline-control'),
-            html.Div([
-                html.Label('Metric:', className='inline-label'),
-                dcc.Dropdown(id='comp-metric-dropdown', options=[
-                    {'label': 'Accel RMS', 'value': 'accel_rms'},
-                    {'label': 'Gyro RMS', 'value': 'gyro_rms'},
-                    {'label': 'Accel Std', 'value': 'accel_std'},
-                    {'label': 'Gyro Std', 'value': 'gyro_std'},
-                ], value='accel_rms', clearable=False, className='inline-dropdown'),
-            ], className='inline-control'),
-        ], className='controls-row'),
-        # Feature comparison (side by side bars)
         html.Div([
             dcc.Graph(id='feature-group-comparison', config={'displayModeBar': False}),
         ], className='viz-block'),
-        # Position in distribution
-        html.Div([
-            dcc.Graph(id='new-vs-group-box', config={'displayModeBar': False}),
-        ], className='viz-block'),
-        # Task profile
         html.Div([
             dcc.Graph(id='task-profile-comparison', config={'displayModeBar': False}),
         ], className='viz-block'),
-        # Asymmetry scatter
+
+        # ── Task-specific (task selector here) ──
+        html.Div([
+            html.Label('Task (아래 차트에 적용):', className='inline-label'),
+            dcc.Dropdown(id='comp-task-dropdown', options=task_options,
+                         value='TouchNose', clearable=False, className='inline-dropdown'),
+            html.Label('Metric:', className='inline-label'),
+            dcc.Dropdown(id='comp-metric-dropdown', options=[
+                {'label': 'Accel RMS', 'value': 'accel_rms'},
+                {'label': 'Gyro RMS', 'value': 'gyro_rms'},
+                {'label': 'Accel Std', 'value': 'accel_std'},
+                {'label': 'Gyro Std', 'value': 'gyro_std'},
+            ], value='accel_rms', clearable=False, className='inline-dropdown'),
+        ], className='controls-row'),
+        html.Div([
+            dcc.Graph(id='new-vs-group-box', config={'displayModeBar': False}),
+        ], className='viz-block'),
         html.Div([
             dcc.Graph(id='asymmetry-scatter', config={'displayModeBar': False}),
         ], className='viz-block'),
