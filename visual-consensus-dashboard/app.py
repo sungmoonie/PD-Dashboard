@@ -346,22 +346,47 @@ def update_summary(tulip_id):
             asym_vals.append(calc_asymmetry_index(lv[0], rv[0]))
     mean_asym = np_local.mean(asym_vals) if asym_vals else 0
 
-    closer = 'PD' if overall > 50 else 'Healthy'
     is_new = tulip_id in NEW_CASES
+
+    # Confidence-aware interpretation
+    diff_ratio = abs(d_pd - d_healthy) / ((d_pd + d_healthy) / 2) if (d_pd + d_healthy) > 0 else 0
+    if diff_ratio < 0.15:
+        interpretation = '판단 불확실 (양쪽 그룹과 거리 유사)'
+        confidence = '낮음'
+        verdict_color = '#805ad5'
+    elif overall > 65:
+        interpretation = 'PD에 가까움'
+        confidence = '높음'
+        verdict_color = '#e53e3e'
+    elif overall < 35:
+        interpretation = 'Healthy에 가까움'
+        confidence = '높음'
+        verdict_color = '#38a169'
+    elif overall > 50:
+        interpretation = 'PD 경향 (약함)'
+        confidence = '중간'
+        verdict_color = '#dd6b20'
+    else:
+        interpretation = 'Healthy 경향 (약함)'
+        confidence = '중간'
+        verdict_color = '#68d391'
 
     # Verdict
     if is_new:
-        verdict_color = '#805ad5' if 40 <= overall <= 60 else (
-            '#e53e3e' if overall > 60 else '#38a169')
         verdict = html.Div([
-            html.H2(f'종합 판단: {closer}에 {abs(overall-50)*2:.0f}% 유사',
+            html.H2(f'{interpretation}',
                     style={'color': verdict_color, 'marginBottom': '8px'}),
-            html.P(f'PD 유사도: {overall:.1f}% | 평균 비대칭: {mean_asym:.3f}',
-                   style={'fontSize': '14px', 'color': '#4a5568'}),
-            html.P(f'd(PD centroid)={d_pd:.2f}, d(Healthy centroid)={d_healthy:.2f}',
+            html.P([
+                html.Span(f'PD 유사도: {overall:.1f}% | '),
+                html.Span(f'신뢰도: {confidence} | '),
+                html.Span(f'비대칭: {mean_asym:.3f}'),
+            ], style={'fontSize': '14px', 'color': '#4a5568'}),
+            html.P(f'd(PD)={d_pd:.2f}, d(Healthy)={d_healthy:.2f}, '
+                   f'차이={abs(d_pd-d_healthy):.3f} ({diff_ratio*100:.1f}%)',
                    style={'fontSize': '12px', 'color': '#718096'}),
-            html.P('방법: Entrainment+Relaxed task의 bilateral feature (tremor, amp, rhythm, jerk) '
-                   'z-score 정규화 후 확정 PD/Healthy centroid까지 Euclidean distance 비교',
+            html.P('방법: Entrainment+Relaxed task의 bilateral feature (tremor, amp, rhythm, jerk)를 '
+                   'z-score 정규화 후, 확정 PD/Healthy centroid까지 Euclidean distance 비교. '
+                   '거리 차이가 15% 미만이면 "판단 불확실"로 표시.',
                    style={'fontSize': '11px', 'color': '#a0aec0', 'marginTop': '4px'}),
         ], className='verdict-box')
     else:

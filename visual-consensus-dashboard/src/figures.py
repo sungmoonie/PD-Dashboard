@@ -890,18 +890,43 @@ def make_new_vs_group_box(group_stats_df, task, metric='accel_rms', highlight_tu
                 name=f'★ {highlight_tulip} (이 환자)',
             ))
 
-            # Proximity annotation
+            # Proximity annotation with confidence
             h_mean = df[df.group == 'Healthy'][metric].mean()
+            h_std = df[df.group == 'Healthy'][metric].std()
             p_mean = df[df.group == 'PD'][metric].mean()
+            p_std = df[df.group == 'PD'][metric].std()
             proximity = _calc_proximity_score(pat_val, h_mean, p_mean)
-            closer_to = 'PD' if proximity > 50 else 'Healthy'
+
+            # Check if within SD of either group
+            in_h_range = abs(pat_val - h_mean) <= h_std if h_std > 0 else False
+            in_p_range = abs(pat_val - p_mean) <= p_std if p_std > 0 else False
+
+            if in_h_range and in_p_range:
+                annot_text = '양쪽 그룹 정상범위 내 (구별 어려움)'
+                annot_color = '#805ad5'
+            elif in_p_range and not in_h_range:
+                annot_text = 'PD 분포 내 위치'
+                annot_color = '#e53e3e'
+            elif in_h_range and not in_p_range:
+                annot_text = 'Healthy 분포 내 위치'
+                annot_color = '#38a169'
+            elif proximity > 65:
+                annot_text = 'PD 범위 초과 (강한 PD 시사)'
+                annot_color = '#e53e3e'
+            elif proximity < 35:
+                annot_text = 'Healthy 범위 (정상)'
+                annot_color = '#38a169'
+            else:
+                annot_text = '경계 영역 (판단 불확실)'
+                annot_color = '#805ad5'
+
             fig.add_annotation(
                 x=0.5, y=1.05, xref='paper', yref='paper',
-                text=f'<b>이 환자 → {closer_to}에 가까움</b> (유���도: {abs(proximity-50)*2:.0f}%)',
+                text=f'<b>{annot_text}</b>',
                 showarrow=False,
-                font=dict(size=13, color=GROUP_COLORS_EXT[closer_to]),
+                font=dict(size=12, color=annot_color),
                 bgcolor='rgba(255,255,255,0.9)',
-                bordercolor=GROUP_COLORS_EXT[closer_to],
+                bordercolor=annot_color,
                 borderwidth=1, borderpad=4,
             )
 
@@ -968,14 +993,22 @@ def make_group_feature_comparison(feature_df, group_stats_df, highlight_tulip=No
         marker=dict(color='#e53e3e', opacity=0.6),
     ))
 
-    # Add proximity score text at top
+    # Add proximity annotation (all 11 tasks averaged - note: less reliable than matching-aligned)
     avg_proximity = np.mean(proximity_scores)
-    overall_closer = 'PD' if avg_proximity > 50 else 'Healthy'
+    if 35 <= avg_proximity <= 65:
+        annot_text = '전체 task 기준: 경계 영역 (구별 어려움)'
+        annot_color = '#805ad5'
+    elif avg_proximity > 65:
+        annot_text = f'전체 task 기준: PD 경향 ({avg_proximity:.0f}%)'
+        annot_color = '#e53e3e'
+    else:
+        annot_text = f'전체 task 기준: Healthy 경향 ({avg_proximity:.0f}%)'
+        annot_color = '#38a169'
     fig.add_annotation(
         x=0.5, y=1.08, xref='paper', yref='paper',
-        text=f'<b>종합 유사도: {overall_closer}에 {abs(avg_proximity-50)*2:.0f}% 가까움</b>',
+        text=f'<b>{annot_text}</b>',
         showarrow=False,
-        font=dict(size=13, color=GROUP_COLORS_EXT[overall_closer]),
+        font=dict(size=12, color=annot_color),
     )
 
     fig.update_layout(
@@ -1073,14 +1106,32 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
     return _apply_defaults(fig, height=450)
 
 
-def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
-    """Matching-aligned proximity gauge.
+def _interpret_proximity(score, d_pd, d_healthy):
+    """Interpret proximity score with confidence level."""
+    diff_ratio = abs(d_pd - d_healthy) / ((d_pd + d_healthy) / 2) if (d_pd + d_healthy) > 0 else 0
 
-    Uses the same methodology as TULIP→PADS matching:
-    - Entrainment + Relaxed tasks only (bilateral motor distance proxy)
-    - Z-score normalized features (tremor_power, amplitude, rhythm_irreg, jerk)
-    - Euclidean distance to PD centroid vs Healthy centroid
-    - Score = d_healthy / (d_healthy + d_pd) × 100
+    if diff_ratio < 0.15:  # less than 15% difference → uncertain
+        return '판단 불확실 (양쪽 거리 유사)', '#805ad5', 'low'
+    elif score > 65:
+        return 'PD에 가까움', '#e53e3e', 'high'
+    elif score < 35:
+        return 'Healthy에 가까움', '#38a169', 'high'
+    elif score > 50:
+        return 'PD 경향 (약함)', '#dd6b20', 'medium'
+    else:
+        return 'Healthy 경향 (약함)', '#68d391', 'medium'
+
+
+def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
+    """Matching-aligned proximity gauge with confidence interpretation.
+
+    Method (hover for details):
+    - Tasks: Entrainment + Relaxed only (matching methodology와 동일)
+    - Features: tremor_power, amplitude, rhythm_irreg, jerk × L/R (8-dim vector)
+    - Normalization: z-score (확정 PD+Healthy 기준)
+    - Distance: Euclidean to PD centroid vs Healthy centroid
+    - Score: d_healthy / (d_healthy + d_pd) × 100
+    - Confidence: |d_PD - d_Healthy| / mean(d) — 차이가 클수록 신뢰도 높음
     """
     if not highlight_tulip:
         return _empty_fig('환자를 선택하세요')
@@ -1094,65 +1145,108 @@ def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
     pat_prox = prox_data[highlight_tulip]
     overall = pat_prox['score']
     per_feature = pat_prox['per_feature']
+    d_pd = pat_prox['d_pd']
+    d_healthy = pat_prox['d_healthy']
+
+    interpretation, interp_color, confidence = _interpret_proximity(overall, d_pd, d_healthy)
 
     fig = go.Figure()
 
-    # Gauge-like horizontal bar (overall)
-    fig.add_trace(go.Bar(
-        x=[100], y=['종합'], orientation='h',
-        marker=dict(color='#edf2f7'), showlegend=False,
-        base=0, width=0.6,
-    ))
+    # Background zone coloring
+    fig.add_vrect(x0=0, x1=35, fillcolor='rgba(56,161,105,0.08)', line_width=0)
+    fig.add_vrect(x0=35, x1=65, fillcolor='rgba(128,90,213,0.05)', line_width=0)
+    fig.add_vrect(x0=65, x1=100, fillcolor='rgba(229,62,62,0.08)', line_width=0)
+
+    # Overall gauge bar
+    bar_color = interp_color
     fig.add_trace(go.Bar(
         x=[overall], y=['종합'], orientation='h',
-        marker=dict(
-            color='#805ad5' if 40 <= overall <= 60
-            else '#e53e3e' if overall > 60
-            else '#38a169',
-        ),
+        marker=dict(color=bar_color),
         showlegend=False, base=0, width=0.6,
         text=f'{overall:.1f}%', textposition='inside',
         textfont=dict(size=16, color='white'),
+        hovertemplate=(
+            f'<b>종합 PD 유사도: {overall:.1f}%</b><br>'
+            f'해석: {interpretation}<br>'
+            f'신뢰도: {confidence}<br><br>'
+            f'<b>산출 방법:</b><br>'
+            f'1. Entrainment + Relaxed task만 사용<br>'
+            f'2. 4개 feature (tremor, amp, rhythm, jerk) × L/R = 8차원 벡터<br>'
+            f'3. 확정 PD+Healthy 기준 z-score 정규화<br>'
+            f'4. PD centroid / Healthy centroid까지 Euclidean distance<br>'
+            f'5. Score = d_Healthy/(d_Healthy+d_PD)×100<br><br>'
+            f'd(PD)={d_pd:.3f}, d(Healthy)={d_healthy:.3f}<br>'
+            f'거리 차이: {abs(d_pd-d_healthy):.3f} '
+            f'({abs(d_pd-d_healthy)/((d_pd+d_healthy)/2)*100:.1f}%)'
+            f'<extra></extra>'
+        ),
     ))
 
-    # Feature-wise breakdown
+    # Feature-wise breakdown with hover explanations
     feat_display = {
         'tremor_power': 'Tremor (4-12Hz)',
         'amplitude': 'Movement Amp.',
         'rhythm_irreg': 'Rhythm Irreg.',
         'jerk': 'Mean Jerk',
     }
+    feat_explain = {
+        'tremor_power': 'FFT → 4-12Hz PSD 적분 (파킨슨 tremor 대역)',
+        'amplitude': 'RMS of |accel| (움직임 강도)',
+        'rhythm_irreg': 'Inter-peak interval의 CV (리듬 불규칙도)',
+        'jerk': 'mean(|Δ|accel||)×fs (움직임 불안정성)',
+    }
     for feat in MATCHING_FEATURES:
         score = per_feature.get(feat, 50)
         name = feat_display.get(feat, feat)
-        color = '#e53e3e' if score > 60 else '#38a169' if score < 40 else '#805ad5'
+        explain = feat_explain.get(feat, '')
+        color = '#e53e3e' if score > 65 else '#38a169' if score < 35 else '#805ad5'
         fig.add_trace(go.Bar(
             x=[score], y=[name], orientation='h',
             marker=dict(color=color, opacity=0.7),
             showlegend=False,
             text=f'{score:.0f}%', textposition='inside',
             textfont=dict(size=11, color='white'),
+            hovertemplate=(
+                f'<b>{name}: {score:.1f}%</b><br>'
+                f'정의: {explain}<br>'
+                f'해석: {"PD-like" if score>65 else "Healthy-like" if score<35 else "경계"}<br>'
+                f'산출: L/R 양측 z-score → PD/Healthy centroid 거리 비교'
+                f'<extra></extra>'
+            ),
         ))
 
-    fig.add_vline(x=50, line_dash='dash', line_color='#718096',
-                  annotation_text='경계선', annotation_position='top')
+    # Zone labels
+    fig.add_annotation(x=17, y=-0.5, text='Healthy', showarrow=False,
+                       font=dict(size=10, color='#38a169'), yref='paper')
+    fig.add_annotation(x=50, y=-0.5, text='불확실', showarrow=False,
+                       font=dict(size=10, color='#805ad5'), yref='paper')
+    fig.add_annotation(x=83, y=-0.5, text='PD', showarrow=False,
+                       font=dict(size=10, color='#e53e3e'), yref='paper')
 
-    closer_to = 'PD' if overall > 50 else 'Healthy'
-    d_info = f'(d_PD={pat_prox["d_pd"]:.2f}, d_Healthy={pat_prox["d_healthy"]:.2f})'
+    fig.add_vline(x=35, line_dash='dot', line_color='#a0aec0', line_width=1)
+    fig.add_vline(x=65, line_dash='dot', line_color='#a0aec0', line_width=1)
+
+    # Confidence indicator
+    conf_text = {'low': '⚠ 신뢰도 낮음 (거리 차이 미미)',
+                 'medium': '△ 중간 신뢰도',
+                 'high': '✓ 높은 신뢰도'}
+
     fig.update_layout(
         title=dict(
-            text=(f'종합 PD 유사도: <b>{overall:.1f}%</b> → <b>{closer_to}</b>에 가까움<br>'
+            text=(f'<b>{interpretation}</b> ({overall:.1f}%)<br>'
                   f'<span style="font-size:11px;color:#718096">'
-                  f'근거: Entrainment+Relaxed bilateral z-score distance {d_info}</span>'),
-            font=dict(size=15),
+                  f'{conf_text[confidence]} | '
+                  f'd_PD={d_pd:.2f}, d_Healthy={d_healthy:.2f} | '
+                  f'Entrainment+Relaxed bilateral distance</span>'),
+            font=dict(size=14),
         ),
-        xaxis=dict(title='← Healthy (0%)        PD (100%) →',
+        xaxis=dict(title='← Healthy (0%) ─── 경계 ─── PD (100%) →',
                    range=[0, 100], gridcolor='#edf2f7', dtick=25),
         yaxis=dict(autorange='reversed'),
-        height=300,
+        height=320,
         plot_bgcolor='white', paper_bgcolor='white',
         font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
-        margin=dict(l=80, r=20, t=60, b=50),
+        margin=dict(l=110, r=20, t=75, b=50),
     )
     return fig
 
