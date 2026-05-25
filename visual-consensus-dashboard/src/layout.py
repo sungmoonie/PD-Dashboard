@@ -258,30 +258,28 @@ def build_tab_asymmetry():
                    '좌우 손목 센서 차이가 클수록 PD 가능성 시사.',
                    className='tab-description'),
         ]),
-        # Summary asymmetry index
+        # ── Patient-level (no task selection) ──
         html.Div([
             dcc.Graph(id='asymmetry-heatmap', config={'displayModeBar': False}),
         ], className='viz-block'),
-        # Task selector for detail
         html.Div([
-            html.Label('Task:', className='inline-label'),
+            html.H3('비대칭 지수 — 그룹 비교', className='viz-title'),
+            dcc.Graph(id='asym-group-compare', config={'displayModeBar': False}),
+        ], className='viz-block'),
+
+        # ── Task-specific (task selector) ──
+        html.Div([
+            html.Label('Task (아래 차트에 적용):', className='inline-label'),
             dcc.Dropdown(id='asym-task-dropdown', options=task_options,
                          value='TouchNose', clearable=False, className='inline-dropdown'),
         ], className='controls-row'),
-        # L vs R waveform overlay
         html.Div([
             html.H3('좌/우 Waveform 비교', className='viz-title'),
             dcc.Graph(id='asym-waveform', config={'displayModeBar': False}),
         ], className='viz-block'),
-        # L vs R feature bars
         html.Div([
             html.H3('좌/우 Feature 비교', className='viz-title'),
             dcc.Graph(id='asym-feature-bars', config={'displayModeBar': False}),
-        ], className='viz-block'),
-        # Group context: this patient's asymmetry vs confirmed groups
-        html.Div([
-            html.H3('비대칭 지수 — 그룹 비교', className='viz-title'),
-            dcc.Graph(id='asym-group-compare', config={'displayModeBar': False}),
         ], className='viz-block'),
     ])
 
