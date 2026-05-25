@@ -325,15 +325,26 @@ def update_summary(tulip_id):
 
     from src.data_loader import compute_proximity_scores, MATCHING_FEATURES
     from src.feature_engineering import calc_asymmetry_index
+    from src.figures import _interpret_proximity
     import numpy as np_local
 
-    # Use matching-aligned proximity
+    # Use matching-aligned proximity (16D weighted Euclidean)
     prox_all = compute_proximity_scores()
     pat_prox = prox_all.get(tulip_id, {})
     overall = pat_prox.get('score', 50.0)
-    per_feature = pat_prox.get('per_feature', {})
+    per_task = pat_prox.get('per_task', {})
     d_pd = pat_prox.get('d_pd', 0)
     d_healthy = pat_prox.get('d_healthy', 0)
+    n_pd = pat_prox.get('n_pd', 0)
+    n_healthy = pat_prox.get('n_healthy', 0)
+    # Flatten per_task into per_feature for findings
+    per_feature = {}
+    for task_feats in per_task.values():
+        for feat, score in task_feats.items():
+            if feat not in per_feature:
+                per_feature[feat] = []
+            per_feature[feat].append(score)
+    per_feature = {f: np_local.mean(v) for f, v in per_feature.items()}
 
     # Asymmetry score
     subj = feature_cache[feature_cache.tulip_id == tulip_id]
@@ -347,55 +358,32 @@ def update_summary(tulip_id):
     mean_asym = np_local.mean(asym_vals) if asym_vals else 0
 
     is_new = tulip_id in NEW_CASES
-
-    # Confidence-aware interpretation
-    diff_ratio = abs(d_pd - d_healthy) / ((d_pd + d_healthy) / 2) if (d_pd + d_healthy) > 0 else 0
-    if diff_ratio < 0.15:
-        interpretation = '판단 불확실 (양쪽 그룹과 거리 유사)'
-        confidence = '낮음'
-        verdict_color = '#805ad5'
-    elif overall > 65:
-        interpretation = 'PD에 가까움'
-        confidence = '높음'
-        verdict_color = '#e53e3e'
-    elif overall < 35:
-        interpretation = 'Healthy에 가까움'
-        confidence = '높음'
-        verdict_color = '#38a169'
-    elif overall > 50:
-        interpretation = 'PD 경향 (약함)'
-        confidence = '중간'
-        verdict_color = '#dd6b20'
-    else:
-        interpretation = 'Healthy 경향 (약함)'
-        confidence = '중간'
-        verdict_color = '#68d391'
+    interpretation, interp_color, _ = _interpret_proximity(overall, d_pd, d_healthy)
 
     # Verdict
     if is_new:
         verdict = html.Div([
-            html.H2(f'{interpretation}',
-                    style={'color': verdict_color, 'marginBottom': '8px'}),
+            html.H2(f'Motor Phenotype: {interpretation}',
+                    style={'color': interp_color, 'marginBottom': '8px'}),
             html.P([
-                html.Span(f'PD 유사도: {overall:.1f}% | '),
-                html.Span(f'신뢰도: {confidence} | '),
-                html.Span(f'비대칭: {mean_asym:.3f}'),
-            ], style={'fontSize': '14px', 'color': '#4a5568'}),
-            html.P(f'd(PD)={d_pd:.2f}, d(Healthy)={d_healthy:.2f}, '
-                   f'차이={abs(d_pd-d_healthy):.3f} ({diff_ratio*100:.1f}%)',
+                html.Span(f'Proximity: {overall:.1f}% | '),
+                html.Span(f'Asymmetry: {mean_asym:.3f} | '),
+                html.Span(f'Ref: PD n={n_pd}, Healthy n={n_healthy}'),
+            ], style={'fontSize': '13px', 'color': '#4a5568'}),
+            html.P(f'd(PD)={d_pd:.2f}, d(Healthy)={d_healthy:.2f}',
                    style={'fontSize': '12px', 'color': '#718096'}),
-            html.P('방법: Entrainment+Relaxed task의 bilateral feature (tremor, amp, rhythm, jerk)를 '
-                   'z-score 정규화 후, 확정 PD/Healthy centroid까지 Euclidean distance 비교. '
-                   '거리 차이가 15% 미만이면 "판단 불확실"로 표시.',
+            html.P('Method: 16D bilateral feature vector (Entrainment+Relaxed × L/R × 4 features), '
+                   'z-score normalized, weighted Euclidean distance to reference centroids. '
+                   'This measures phenotype similarity, NOT diagnostic probability.',
                    style={'fontSize': '11px', 'color': '#a0aec0', 'marginTop': '4px'}),
         ], className='verdict-box')
     else:
         row = patients_df[patients_df.tulip_id == tulip_id]
         condition = row.iloc[0]['condition'] if not row.empty else '—'
         verdict = html.Div([
-            html.H2(f'확정: {condition}', style={'color': '#2c3e50'}),
-            html.P(f'Reference — PD 유사도: {overall:.1f}% '
-                   f'(d_PD={d_pd:.2f}, d_Healthy={d_healthy:.2f})'),
+            html.H2(f'Confirmed: {condition}', style={'color': '#2c3e50'}),
+            html.P(f'Reference analog — Proximity: {overall:.1f}% '
+                   f'(d_PD={d_pd:.2f}, d_H={d_healthy:.2f})'),
         ], className='verdict-box')
 
     scores = per_feature

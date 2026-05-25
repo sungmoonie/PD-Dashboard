@@ -820,8 +820,9 @@ def make_evidence_ribbon(feature_df, tulip_id):
 
 
 # ══════════════════════════════════════════════════════════════
-#  NEW PATIENT vs CONFIRMED GROUP COMPARISON
-#  — 선택된 환자 1명에 대해 확정 PD/Healthy와 차이 시각화
+#  MOTOR PHENOTYPE PROXIMITY — Reference Cohort Similarity
+#  NOT a diagnostic classifier. Measures centroid-relative
+#  similarity to confirmed PD/Healthy reference cohorts.
 # ══════════════════════════════════════════════════════════════
 
 GROUP_COLORS_EXT = {
@@ -829,25 +830,175 @@ GROUP_COLORS_EXT = {
 }
 
 
+def _interpret_proximity(score, d_pd, d_healthy):
+    """Interpret proximity as ambiguous zone vs directional."""
+    diff_ratio = abs(d_pd - d_healthy) / ((d_pd + d_healthy) / 2) if (d_pd + d_healthy) > 0 else 0
+    if diff_ratio < 0.15:
+        return 'Ambiguous proximity zone (equidistant)', '#805ad5', 'ambiguous'
+    elif score > 65:
+        return 'PD-like motor phenotype', '#e53e3e', 'pd_like'
+    elif score < 35:
+        return 'Healthy-like motor phenotype', '#38a169', 'healthy_like'
+    elif score > 50:
+        return 'Mildly PD-leaning phenotype', '#dd6b20', 'mild_pd'
+    else:
+        return 'Mildly Healthy-leaning phenotype', '#68d391', 'mild_healthy'
+
+
 def _calc_proximity_score(patient_val, healthy_mean, pd_mean):
-    """Fallback: linear interpolation proximity. 0=Healthy, 100=PD.
-    NOTE: For overall scores, use compute_proximity_scores() which uses
-    matching-aligned methodology (Entrainment+Relaxed, z-score, Euclidean distance).
-    """
+    """Fallback linear proximity for per-feature display only."""
     if pd_mean == healthy_mean:
         return 50.0
     score = (patient_val - healthy_mean) / (pd_mean - healthy_mean) * 100
     return max(0, min(100, score))
 
 
-def make_new_vs_group_box(group_stats_df, task, metric='accel_rms', highlight_tulip=None):
-    """Box plot: selected patient's position within confirmed PD/Healthy distributions.
+def _percentile_position(value, group_values):
+    """Calculate percentile position of value within group (Revision 8)."""
+    if len(group_values) == 0:
+        return 50.0
+    return float(np.sum(group_values <= value) / len(group_values) * 100)
 
-    Clear visual showing where THIS patient sits relative to each group.
+
+def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
+    """Motor Phenotype Proximity — Reference Cohort Similarity.
+
+    This is NOT a diagnostic probability. It measures how similar this
+    analog's motor characteristics are to confirmed reference cohorts.
+
+    Method (16D weighted Euclidean, alignment-consistent):
+    - Vector: 2 tasks (Entrainment+Relaxed) × 2 wrists × 4 features = 16D
+    - Weights: tremor=1.5, rhythm=1.3, amplitude=1.0, jerk=1.0
+    - Normalization: z-score (confirmed PD+Healthy reference)
+    - Distance: weighted Euclidean to PD/Healthy centroids
+    - Score: d_Healthy / (d_Healthy + d_PD) × 100
     """
+    if not highlight_tulip:
+        return _empty_fig('Select a patient')
+
+    from src.data_loader import compute_proximity_scores, MATCHING_FEATURES, MATCHING_TASKS
+
+    prox_data = compute_proximity_scores()
+    if highlight_tulip not in prox_data:
+        return _empty_fig('Proximity computation unavailable')
+
+    pat = prox_data[highlight_tulip]
+    overall = pat['score']
+    d_pd = pat['d_pd']
+    d_healthy = pat['d_healthy']
+    n_pd = pat['n_pd']
+    n_healthy = pat['n_healthy']
+    per_task = pat.get('per_task', {})
+    vec_dim = pat.get('vector_dim', 16)
+
+    interpretation, interp_color, _ = _interpret_proximity(overall, d_pd, d_healthy)
+
+    # Cohort stability warning (Revision 5)
+    if n_pd < 5 or n_healthy < 5:
+        stability = 'Exploratory only (n<5)'
+    elif n_pd < 10 or n_healthy < 10:
+        stability = 'Low reference stability (n<10)'
+    else:
+        stability = 'Adequate reference'
+
+    fig = go.Figure()
+
+    # Background zones
+    fig.add_vrect(x0=0, x1=35, fillcolor='rgba(56,161,105,0.06)', line_width=0)
+    fig.add_vrect(x0=35, x1=65, fillcolor='rgba(128,90,213,0.04)', line_width=0)
+    fig.add_vrect(x0=65, x1=100, fillcolor='rgba(229,62,62,0.06)', line_width=0)
+
+    # Overall bar
+    fig.add_trace(go.Bar(
+        x=[overall], y=['Overall'], orientation='h',
+        marker=dict(color=interp_color),
+        showlegend=False, base=0, width=0.6,
+        text=f'{overall:.1f}%', textposition='inside',
+        textfont=dict(size=15, color='white'),
+        hovertemplate=(
+            f'<b>Motor Phenotype Proximity: {overall:.1f}%</b><br><br>'
+            f'Interpretation: {interpretation}<br><br>'
+            f'<b>Method:</b><br>'
+            f'• {vec_dim}D vector: {len(MATCHING_TASKS)} tasks × 2 wrists × {len(MATCHING_FEATURES)} features<br>'
+            f'• Tasks: Entrainment (rhythm proxy) + Relaxed (rest tremor proxy)<br>'
+            f'• Features: tremor(w=1.5), amp(w=1.0), rhythm(w=1.3), jerk(w=1.0)<br>'
+            f'• Normalization: z-score on confirmed reference cohort<br>'
+            f'• Distance: weighted Euclidean to group centroids<br>'
+            f'• Score = d(Healthy) / (d(Healthy)+d(PD)) × 100<br><br>'
+            f'd(PD centroid) = {d_pd:.3f}<br>'
+            f'd(Healthy centroid) = {d_healthy:.3f}<br>'
+            f'Difference: {abs(d_pd-d_healthy):.3f}<br><br>'
+            f'<b>Reference cohort:</b> PD n={n_pd}, Healthy n={n_healthy}<br>'
+            f'Stability: {stability}<br><br>'
+            f'<i>This is NOT a diagnostic probability.<br>'
+            f'It measures reference cohort similarity only.</i>'
+            f'<extra></extra>'
+        ),
+    ))
+
+    # Per-task breakdown
+    task_display = {'Entrainment': 'Entrainment\n(rhythm/bradykinesia)', 'Relaxed': 'Relaxed\n(rest tremor)'}
+    for task in MATCHING_TASKS:
+        task_feats = per_task.get(task, {})
+        task_score = np.mean(list(task_feats.values())) if task_feats else 50
+        color = '#e53e3e' if task_score > 65 else '#38a169' if task_score < 35 else '#805ad5'
+        label = task_display.get(task, task)
+        fig.add_trace(go.Bar(
+            x=[task_score], y=[label], orientation='h',
+            marker=dict(color=color, opacity=0.7),
+            showlegend=False,
+            text=f'{task_score:.0f}%', textposition='inside',
+            textfont=dict(size=11, color='white'),
+            hovertemplate=(
+                f'<b>{task}: {task_score:.1f}%</b><br><br>'
+                f'Task meaning: {"rest tremor proxy" if task=="Relaxed" else "rhythm/bradykinesia proxy"}<br><br>'
+                f'Per-feature breakdown:<br>'
+                + '<br>'.join([f'  {f}: {task_feats.get(f, 50):.1f}%' for f in MATCHING_FEATURES])
+                + f'<br><br>Uses weighted Euclidean (task-specific slice of 16D vector)'
+                f'<extra></extra>'
+            ),
+        ))
+
+    # Zone labels and lines
+    fig.add_vline(x=35, line_dash='dot', line_color='#a0aec0', line_width=1)
+    fig.add_vline(x=65, line_dash='dot', line_color='#a0aec0', line_width=1)
+    fig.add_annotation(x=17, y=-0.3, text='Healthy-like', showarrow=False,
+                       font=dict(size=9, color='#38a169'), yref='paper')
+    fig.add_annotation(x=50, y=-0.3, text='Ambiguous', showarrow=False,
+                       font=dict(size=9, color='#805ad5'), yref='paper')
+    fig.add_annotation(x=83, y=-0.3, text='PD-like', showarrow=False,
+                       font=dict(size=9, color='#e53e3e'), yref='paper')
+
+    fig.update_layout(
+        title=dict(
+            text=(f'<b>Motor Phenotype Proximity: {interpretation}</b><br>'
+                  f'<span style="font-size:11px;color:#718096">'
+                  f'Reference: PD n={n_pd}, Healthy n={n_healthy} | {stability} | '
+                  f'16D weighted Euclidean | d_PD={d_pd:.2f}, d_H={d_healthy:.2f}</span>'),
+            font=dict(size=13),
+        ),
+        xaxis=dict(title='← Healthy-like (0%) ─── Ambiguous ─── PD-like (100%) →',
+                   range=[0, 100], gridcolor='#edf2f7', dtick=25),
+        yaxis=dict(autorange='reversed'),
+        height=280,
+        plot_bgcolor='white', paper_bgcolor='white',
+        font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
+        margin=dict(l=130, r=20, t=75, b=50),
+    )
+    return fig
+
+
+def make_new_vs_group_box(group_stats_df, task, metric='accel_rms', highlight_tulip=None):
+    """Distribution position with percentile interpretation (Revision 8).
+
+    Shows violin distribution + patient percentile position within each group.
+    Uses task-specific default metric when available (Revision 7).
+    """
+    from src.data_loader import TASK_DEFAULT_METRICS, MATCHING_FEATURES
+
     df = group_stats_df[group_stats_df.task == task].copy()
     if df.empty:
-        return _empty_fig('데이터 없음')
+        return _empty_fig('No data')
 
     metric_labels = {
         'accel_rms': 'Accelerometer RMS (g)',
@@ -858,207 +1009,200 @@ def make_new_vs_group_box(group_stats_df, task, metric='accel_rms', highlight_tu
 
     fig = go.Figure()
 
-    # Confirmed groups as violin/box
+    h_vals = df[df.group == 'Healthy'][metric].values
+    p_vals = df[df.group == 'PD'][metric].values
+
     for group in ['Healthy', 'PD']:
         gd = df[df.group == group]
         if gd.empty:
             continue
         color = GROUP_COLORS_EXT[group]
+        n = len(gd) // 2  # L+R counted separately
         fig.add_trace(go.Violin(
-            y=gd[metric].values, name=f'{group}\n(n={len(gd)//2})',
+            y=gd[metric].values, name=f'{group} (n={n})',
             marker=dict(color=color, size=5),
             line=dict(color=color),
             box_visible=True, meanline_visible=True,
             points='all', jitter=0.3,
             side='both', opacity=0.7,
+            hovertemplate=(
+                f'{group} reference<br>'
+                f'n={n} subjects<br>'
+                f'Value: %{{y:.4f}}<br>'
+                f'<extra></extra>'
+            ),
         ))
 
-    # Selected patient marker + annotation
+    # Patient position with percentile (Revision 8)
     if highlight_tulip:
         pat_data = df[df.tulip_id == highlight_tulip]
         if not pat_data.empty:
             pat_val = pat_data[metric].mean()
-            # Draw on both group positions to show relative position
+            pct_h = _percentile_position(pat_val, h_vals)
+            pct_p = _percentile_position(pat_val, p_vals)
+
             fig.add_trace(go.Scatter(
-                x=['Healthy\n(n={})'.format(len(df[df.group == 'Healthy']) // 2),
-                   'PD\n(n={})'.format(len(df[df.group == 'PD']) // 2)],
+                x=[f'Healthy (n={len(h_vals)//2})', f'PD (n={len(p_vals)//2})'],
                 y=[pat_val, pat_val],
                 mode='markers+lines',
                 marker=dict(size=16, color='#805ad5', symbol='star',
                             line=dict(width=2, color='white')),
                 line=dict(color='#805ad5', width=2, dash='dash'),
-                name=f'★ {highlight_tulip} (이 환자)',
+                name=f'★ {highlight_tulip}',
+                hovertemplate=(
+                    f'<b>★ {highlight_tulip}</b><br>'
+                    f'Value: {pat_val:.4f}<br><br>'
+                    f'Percentile in Healthy: {pct_h:.0f}th<br>'
+                    f'Percentile in PD: {pct_p:.0f}th<br><br>'
+                    f'<i>Percentile = % of reference group<br>'
+                    f'with equal or lower values</i>'
+                    f'<extra></extra>'
+                ),
             ))
 
-            # Proximity annotation with confidence
-            h_mean = df[df.group == 'Healthy'][metric].mean()
-            h_std = df[df.group == 'Healthy'][metric].std()
-            p_mean = df[df.group == 'PD'][metric].mean()
-            p_std = df[df.group == 'PD'][metric].std()
-            proximity = _calc_proximity_score(pat_val, h_mean, p_mean)
-
-            # Check if within SD of either group
-            in_h_range = abs(pat_val - h_mean) <= h_std if h_std > 0 else False
-            in_p_range = abs(pat_val - p_mean) <= p_std if p_std > 0 else False
-
-            if in_h_range and in_p_range:
-                annot_text = '양쪽 그룹 정상범위 내 (구별 어려움)'
+            # Annotation: percentile-based (Revision 8, safer language Revision 9)
+            if pct_h > 95:
+                annot = 'Outside typical Healthy range (>95th pct)'
+                annot_color = '#e53e3e'
+            elif pct_h < 50 and pct_p < 50:
+                annot = 'Below both group medians'
+                annot_color = '#38a169'
+            elif pct_p > 50 and pct_h > 50:
+                annot = 'Overlapping zone (within both distributions)'
                 annot_color = '#805ad5'
-            elif in_p_range and not in_h_range:
-                annot_text = 'PD 분포 내 위치'
-                annot_color = '#e53e3e'
-            elif in_h_range and not in_p_range:
-                annot_text = 'Healthy 분포 내 위치'
-                annot_color = '#38a169'
-            elif proximity > 65:
-                annot_text = 'PD 범위 초과 (강한 PD 시사)'
-                annot_color = '#e53e3e'
-            elif proximity < 35:
-                annot_text = 'Healthy 범위 (정상)'
-                annot_color = '#38a169'
             else:
-                annot_text = '경계 영역 (판단 불확실)'
-                annot_color = '#805ad5'
+                annot = f'H:{pct_h:.0f}th pct | PD:{pct_p:.0f}th pct'
+                annot_color = '#4a5568'
 
             fig.add_annotation(
                 x=0.5, y=1.05, xref='paper', yref='paper',
-                text=f'<b>{annot_text}</b>',
+                text=f'<b>{annot}</b>',
                 showarrow=False,
-                font=dict(size=12, color=annot_color),
-                bgcolor='rgba(255,255,255,0.9)',
-                bordercolor=annot_color,
-                borderwidth=1, borderpad=4,
+                font=dict(size=11, color=annot_color),
             )
 
     fig.update_layout(
-        title=dict(text=f'환자 위치 분석 — {task} ({metric_labels.get(metric, metric)})',
-                   font=dict(size=14)),
+        title=dict(text=f'Reference Distribution Position — {task}', font=dict(size=13)),
         yaxis=dict(title=metric_labels.get(metric, metric), gridcolor='#edf2f7'),
         legend=dict(orientation='h', y=-0.15),
     )
-    return _apply_defaults(fig, height=440)
+    return _apply_defaults(fig, height=430)
 
 
 def make_group_feature_comparison(feature_df, group_stats_df, highlight_tulip=None):
-    """Radar-style bar chart: 4 features, PD mean / Healthy mean / This patient.
+    """Task-aware feature comparison (Revision 6).
 
-    Each feature normalized to show relative position clearly.
+    Groups tasks by clinical meaning instead of blind averaging.
     """
-    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
+    from src.data_loader import TASK_GROUPS, TASK_DEFAULT_METRICS
 
     if feature_df.empty or not highlight_tulip:
-        return _empty_fig('환자를 선택하세요')
+        return _empty_fig('Select a patient')
 
-    # Merge group info
     group_map = group_stats_df[['tulip_id', 'group']].drop_duplicates()
     merged = feature_df.merge(group_map, on='tulip_id', how='left')
 
-    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
-    feat_labels = [FEATURE_LABELS[f] for f in features]
+    # Task-aware grouping (Revision 6)
+    task_group_labels = ['Rest\n(tremor)', 'Repetitive\n(rhythm)', 'Intentional\n(action)', 'Postural\n(hold)']
+    task_group_keys = ['rest', 'repetitive', 'intentional', 'postural']
 
-    # Calculate means per group and patient value
-    healthy_means = []
-    pd_means = []
-    patient_vals = []
-    proximity_scores = []
+    fig = make_subplots(rows=1, cols=4, subplot_titles=task_group_labels,
+                        horizontal_spacing=0.08)
 
-    for feat in features:
-        h_data = merged[merged.group == 'Healthy'][feat]
-        p_data = merged[merged.group == 'PD'][feat]
-        pat_data = merged[merged.tulip_id == highlight_tulip][feat]
+    for i, (tg_key, tg_label) in enumerate(zip(task_group_keys, task_group_labels), 1):
+        tasks_in_group = TASK_GROUPS.get(tg_key, [])
+        tg_data = merged[merged.task.isin(tasks_in_group)]
 
-        h_mean = h_data.mean() if not h_data.empty else 0
-        p_mean = p_data.mean() if not p_data.empty else 0
-        pat_val = pat_data.mean() if not pat_data.empty else 0
+        # Use task-appropriate metric (Revision 7)
+        primary_feat = 'tremor_power' if tg_key == 'rest' else (
+            'rhythm_irreg' if tg_key == 'repetitive' else 'amplitude')
 
-        healthy_means.append(h_mean)
-        pd_means.append(p_mean)
-        patient_vals.append(pat_val)
-        proximity_scores.append(_calc_proximity_score(pat_val, h_mean, p_mean))
+        for group in ['Healthy', 'PD']:
+            gd = tg_data[tg_data.group == group]
+            mean_val = gd[primary_feat].mean() if not gd.empty else 0
+            std_val = gd[primary_feat].std() if not gd.empty else 0
+            color = GROUP_COLORS_EXT[group]
+            fig.add_trace(go.Bar(
+                x=[group], y=[mean_val],
+                error_y=dict(type='data', array=[std_val], visible=True),
+                marker=dict(color=color, opacity=0.7),
+                name=group if i == 1 else None,
+                showlegend=(i == 1), legendgroup=group,
+                hovertemplate=(
+                    f'{group}<br>'
+                    f'Metric: {FEATURE_LABELS.get(primary_feat, primary_feat)}<br>'
+                    f'Tasks: {", ".join(tasks_in_group)}<br>'
+                    f'Mean: %{{y:.4f}} ± {std_val:.4f}<br>'
+                    f'<extra></extra>'
+                ),
+            ), row=1, col=i)
 
-    fig = go.Figure()
-
-    # Grouped bars: Healthy / Patient / PD
-    fig.add_trace(go.Bar(
-        x=feat_labels, y=healthy_means, name='Healthy 평균',
-        marker=dict(color='#38a169', opacity=0.6),
-    ))
-    fig.add_trace(go.Bar(
-        x=feat_labels, y=patient_vals, name=f'★ {highlight_tulip}',
-        marker=dict(color='#805ad5', opacity=0.9,
-                    line=dict(width=2, color='#553c9a')),
-    ))
-    fig.add_trace(go.Bar(
-        x=feat_labels, y=pd_means, name='PD 평균',
-        marker=dict(color='#e53e3e', opacity=0.6),
-    ))
-
-    # Add proximity annotation (all 11 tasks averaged - note: less reliable than matching-aligned)
-    avg_proximity = np.mean(proximity_scores)
-    if 35 <= avg_proximity <= 65:
-        annot_text = '전체 task 기준: 경계 영역 (구별 어려움)'
-        annot_color = '#805ad5'
-    elif avg_proximity > 65:
-        annot_text = f'전체 task 기준: PD 경향 ({avg_proximity:.0f}%)'
-        annot_color = '#e53e3e'
-    else:
-        annot_text = f'전체 task 기준: Healthy 경향 ({avg_proximity:.0f}%)'
-        annot_color = '#38a169'
-    fig.add_annotation(
-        x=0.5, y=1.08, xref='paper', yref='paper',
-        text=f'<b>{annot_text}</b>',
-        showarrow=False,
-        font=dict(size=12, color=annot_color),
-    )
+        # Patient value
+        pat_data = tg_data[tg_data.tulip_id == highlight_tulip]
+        if not pat_data.empty:
+            pat_val = pat_data[primary_feat].mean()
+            fig.add_trace(go.Scatter(
+                x=['Healthy', 'PD'], y=[pat_val, pat_val],
+                mode='lines+markers',
+                line=dict(color='#805ad5', width=2, dash='dash'),
+                marker=dict(size=10, symbol='star', color='#805ad5'),
+                name=f'★ {highlight_tulip}' if i == 1 else None,
+                showlegend=(i == 1), legendgroup='patient',
+                hovertemplate=(
+                    f'★ {highlight_tulip}<br>'
+                    f'{FEATURE_LABELS.get(primary_feat, primary_feat)}: {pat_val:.4f}<br>'
+                    f'<i>Task group: {tg_key}<br>'
+                    f'Default metric chosen by clinical relevance</i>'
+                    f'<extra></extra>'
+                ),
+            ), row=1, col=i)
 
     fig.update_layout(
-        title=dict(text=f'Feature별 그룹 비교 — {highlight_tulip}', font=dict(size=14)),
-        barmode='group',
-        yaxis=dict(title='Feature Value', gridcolor='#edf2f7'),
-        legend=dict(orientation='h', y=-0.15),
+        title=dict(text='Task-Grouped Feature Comparison (clinically-aligned metrics)',
+                   font=dict(size=13)),
+        barmode='group', legend=dict(orientation='h', y=-0.15),
+        height=380, **LAYOUT_DEFAULTS,
     )
-    return _apply_defaults(fig, height=400)
+    return fig
 
 
 def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
-    """Task-wise movement profile: PD/Healthy bands + selected patient line.
+    """Task-wise profile with task-specific metrics (Revision 7).
 
-    Shows which tasks deviate most from healthy range.
+    Layer A (Entrainment+Relaxed): alignment evidence
+    Layer B (other tasks): hypothetical multimodal expansion
     """
-    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
+    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR, TASK_DEFAULT_METRICS, MATCHING_TASKS
 
     df = group_stats_df.copy()
     if df.empty:
-        return _empty_fig('데이터 없음')
+        return _empty_fig('No data')
 
     tasks = SENSOR_TASKS
     task_labels = [TASK_LABELS_KR.get(t, t) for t in tasks]
 
     fig = go.Figure()
 
-    group_means = {}
+    group_data = {}
     for group, color in [('Healthy', '#38a169'), ('PD', '#e53e3e')]:
         gd = df[df.group == group]
-        means = []
-        stds = []
+        means, stds = [], []
         for task in tasks:
             td = gd[gd.task == task]['accel_rms']
             means.append(td.mean() if len(td) > 0 else 0)
             stds.append(td.std() if len(td) > 0 else 0)
-
         means = np.array(means)
         stds = np.array(stds)
-        group_means[group] = means
+        group_data[group] = means
 
-        # Band (mean ± SD)
+        # Band
         fig.add_trace(go.Scatter(
             x=task_labels + task_labels[::-1],
             y=list(means + stds) + list((means - stds)[::-1]),
             fill='toself',
-            fillcolor=f'rgba({",".join(str(int(color[i:i+2], 16)) for i in (1,3,5))},0.12)',
+            fillcolor=f'rgba({",".join(str(int(color[i:i+2], 16)) for i in (1,3,5))},0.1)',
             line=dict(width=0), showlegend=False, hoverinfo='skip',
         ))
-        # Mean line
         fig.add_trace(go.Scatter(
             x=task_labels, y=means, mode='lines+markers',
             line=dict(color=color, width=2),
@@ -1066,7 +1210,7 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
             name=f'{group} (mean±SD)',
         ))
 
-    # Selected patient overlay with clear emphasis
+    # Patient overlay
     if highlight_tulip:
         new_data = df[df.tulip_id == highlight_tulip]
         if not new_data.empty:
@@ -1074,31 +1218,37 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
             for task in tasks:
                 td = new_data[new_data.task == task]['accel_rms']
                 new_vals.append(td.mean() if len(td) > 0 else 0)
-
             fig.add_trace(go.Scatter(
                 x=task_labels, y=new_vals,
                 mode='lines+markers',
                 line=dict(color='#805ad5', width=3),
                 marker=dict(size=11, symbol='star', color='#805ad5',
                             line=dict(width=2, color='white')),
-                name=f'★ {highlight_tulip} (이 환자)',
+                name=f'★ {highlight_tulip}',
             ))
 
-            # Mark tasks where patient is closer to PD than Healthy
-            if 'Healthy' in group_means and 'PD' in group_means:
-                for i, (val, h, p) in enumerate(zip(new_vals, group_means['Healthy'], group_means['PD'])):
-                    prox = _calc_proximity_score(val, h, p)
-                    if prox > 70:  # clearly PD-like
-                        fig.add_annotation(
-                            x=task_labels[i], y=val,
-                            text='⚠', showarrow=False,
-                            font=dict(size=14, color='#e53e3e'),
-                            yshift=15,
-                        )
+            # Mark Layer A tasks (alignment evidence)
+            for i, task in enumerate(tasks):
+                if task in MATCHING_TASKS:
+                    fig.add_annotation(
+                        x=task_labels[i], y=new_vals[i],
+                        text='A', showarrow=False,
+                        font=dict(size=8, color='white'),
+                        bgcolor='#2b6cb0', borderpad=2,
+                        yshift=-18,
+                    )
+
+    # Layer legend
+    fig.add_annotation(
+        x=0.01, y=0.99, xref='paper', yref='paper',
+        text='<b>A</b> = Alignment evidence (Entrainment+Relaxed)<br>'
+             'Others = Hypothetical multimodal expansion',
+        showarrow=False, font=dict(size=9, color='#718096'),
+        align='left', bgcolor='rgba(255,255,255,0.8)',
+    )
 
     fig.update_layout(
-        title=dict(text=f'Task별 Movement Profile — 이 환자 vs 확정 그룹',
-                   font=dict(size=14)),
+        title=dict(text='Movement Profile — Reference Comparison', font=dict(size=13)),
         xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
         yaxis=dict(title='Accel RMS (g)', gridcolor='#edf2f7'),
         legend=dict(orientation='h', y=-0.2, font=dict(size=11)),
@@ -1106,168 +1256,37 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
     return _apply_defaults(fig, height=450)
 
 
-def _interpret_proximity(score, d_pd, d_healthy):
-    """Interpret proximity score with confidence level."""
-    diff_ratio = abs(d_pd - d_healthy) / ((d_pd + d_healthy) / 2) if (d_pd + d_healthy) > 0 else 0
-
-    if diff_ratio < 0.15:  # less than 15% difference → uncertain
-        return '판단 불확실 (양쪽 거리 유사)', '#805ad5', 'low'
-    elif score > 65:
-        return 'PD에 가까움', '#e53e3e', 'high'
-    elif score < 35:
-        return 'Healthy에 가까움', '#38a169', 'high'
-    elif score > 50:
-        return 'PD 경향 (약함)', '#dd6b20', 'medium'
-    else:
-        return 'Healthy 경향 (약함)', '#68d391', 'medium'
-
-
-def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
-    """Matching-aligned proximity gauge with confidence interpretation.
-
-    Method (hover for details):
-    - Tasks: Entrainment + Relaxed only (matching methodology와 동일)
-    - Features: tremor_power, amplitude, rhythm_irreg, jerk × L/R (8-dim vector)
-    - Normalization: z-score (확정 PD+Healthy 기준)
-    - Distance: Euclidean to PD centroid vs Healthy centroid
-    - Score: d_healthy / (d_healthy + d_pd) × 100
-    - Confidence: |d_PD - d_Healthy| / mean(d) — 차이가 클수록 신뢰도 높음
-    """
-    if not highlight_tulip:
-        return _empty_fig('환자를 선택하세요')
-
-    from src.data_loader import compute_proximity_scores, MATCHING_FEATURES
-
-    prox_data = compute_proximity_scores()
-    if highlight_tulip not in prox_data:
-        return _empty_fig('Proximity 계산 불가')
-
-    pat_prox = prox_data[highlight_tulip]
-    overall = pat_prox['score']
-    per_feature = pat_prox['per_feature']
-    d_pd = pat_prox['d_pd']
-    d_healthy = pat_prox['d_healthy']
-
-    interpretation, interp_color, confidence = _interpret_proximity(overall, d_pd, d_healthy)
-
-    fig = go.Figure()
-
-    # Background zone coloring
-    fig.add_vrect(x0=0, x1=35, fillcolor='rgba(56,161,105,0.08)', line_width=0)
-    fig.add_vrect(x0=35, x1=65, fillcolor='rgba(128,90,213,0.05)', line_width=0)
-    fig.add_vrect(x0=65, x1=100, fillcolor='rgba(229,62,62,0.08)', line_width=0)
-
-    # Overall gauge bar
-    bar_color = interp_color
-    fig.add_trace(go.Bar(
-        x=[overall], y=['종합'], orientation='h',
-        marker=dict(color=bar_color),
-        showlegend=False, base=0, width=0.6,
-        text=f'{overall:.1f}%', textposition='inside',
-        textfont=dict(size=16, color='white'),
-        hovertemplate=(
-            f'<b>종합 PD 유사도: {overall:.1f}%</b><br>'
-            f'해석: {interpretation}<br>'
-            f'신뢰도: {confidence}<br><br>'
-            f'<b>산출 방법:</b><br>'
-            f'1. Entrainment + Relaxed task만 사용<br>'
-            f'2. 4개 feature (tremor, amp, rhythm, jerk) × L/R = 8차원 벡터<br>'
-            f'3. 확정 PD+Healthy 기준 z-score 정규화<br>'
-            f'4. PD centroid / Healthy centroid까지 Euclidean distance<br>'
-            f'5. Score = d_Healthy/(d_Healthy+d_PD)×100<br><br>'
-            f'd(PD)={d_pd:.3f}, d(Healthy)={d_healthy:.3f}<br>'
-            f'거리 차이: {abs(d_pd-d_healthy):.3f} '
-            f'({abs(d_pd-d_healthy)/((d_pd+d_healthy)/2)*100:.1f}%)'
-            f'<extra></extra>'
-        ),
-    ))
-
-    # Feature-wise breakdown with hover explanations
-    feat_display = {
-        'tremor_power': 'Tremor (4-12Hz)',
-        'amplitude': 'Movement Amp.',
-        'rhythm_irreg': 'Rhythm Irreg.',
-        'jerk': 'Mean Jerk',
-    }
-    feat_explain = {
-        'tremor_power': 'FFT → 4-12Hz PSD 적분 (파킨슨 tremor 대역)',
-        'amplitude': 'RMS of |accel| (움직임 강도)',
-        'rhythm_irreg': 'Inter-peak interval의 CV (리듬 불규칙도)',
-        'jerk': 'mean(|Δ|accel||)×fs (움직임 불안정성)',
-    }
-    for feat in MATCHING_FEATURES:
-        score = per_feature.get(feat, 50)
-        name = feat_display.get(feat, feat)
-        explain = feat_explain.get(feat, '')
-        color = '#e53e3e' if score > 65 else '#38a169' if score < 35 else '#805ad5'
-        fig.add_trace(go.Bar(
-            x=[score], y=[name], orientation='h',
-            marker=dict(color=color, opacity=0.7),
-            showlegend=False,
-            text=f'{score:.0f}%', textposition='inside',
-            textfont=dict(size=11, color='white'),
-            hovertemplate=(
-                f'<b>{name}: {score:.1f}%</b><br>'
-                f'정의: {explain}<br>'
-                f'해석: {"PD-like" if score>65 else "Healthy-like" if score<35 else "경계"}<br>'
-                f'산출: L/R 양측 z-score → PD/Healthy centroid 거리 비교'
-                f'<extra></extra>'
-            ),
-        ))
-
-    # Zone labels
-    fig.add_annotation(x=17, y=-0.5, text='Healthy', showarrow=False,
-                       font=dict(size=10, color='#38a169'), yref='paper')
-    fig.add_annotation(x=50, y=-0.5, text='불확실', showarrow=False,
-                       font=dict(size=10, color='#805ad5'), yref='paper')
-    fig.add_annotation(x=83, y=-0.5, text='PD', showarrow=False,
-                       font=dict(size=10, color='#e53e3e'), yref='paper')
-
-    fig.add_vline(x=35, line_dash='dot', line_color='#a0aec0', line_width=1)
-    fig.add_vline(x=65, line_dash='dot', line_color='#a0aec0', line_width=1)
-
-    # Confidence indicator
-    conf_text = {'low': '⚠ 신뢰도 낮음 (거리 차이 미미)',
-                 'medium': '△ 중간 신뢰도',
-                 'high': '✓ 높은 신뢰도'}
-
-    fig.update_layout(
-        title=dict(
-            text=(f'<b>{interpretation}</b> ({overall:.1f}%)<br>'
-                  f'<span style="font-size:11px;color:#718096">'
-                  f'{conf_text[confidence]} | '
-                  f'd_PD={d_pd:.2f}, d_Healthy={d_healthy:.2f} | '
-                  f'Entrainment+Relaxed bilateral distance</span>'),
-            font=dict(size=14),
-        ),
-        xaxis=dict(title='← Healthy (0%) ─── 경계 ─── PD (100%) →',
-                   range=[0, 100], gridcolor='#edf2f7', dtick=25),
-        yaxis=dict(autorange='reversed'),
-        height=320,
-        plot_bgcolor='white', paper_bgcolor='white',
-        font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
-        margin=dict(l=110, r=20, t=75, b=50),
-    )
-    return fig
-
-
 def make_asymmetry_scatter(group_stats_df, task, highlight_tulip=None):
-    """L vs R scatter — selected patient highlighted against confirmed groups."""
-    df = group_stats_df[group_stats_df.task == task].copy()
-    if df.empty:
-        return _empty_fig('데이터 없음')
+    """Bilateral scatter with task-specific metric (Revision 10).
 
-    left = df[df.wrist == 'Left'][['tulip_id', 'group', 'accel_rms']].rename(
-        columns={'accel_rms': 'left_rms'})
-    right = df[df.wrist == 'Right'][['tulip_id', 'accel_rms']].rename(
-        columns={'accel_rms': 'right_rms'})
+    Uses clinically relevant bilateral axis depending on task type.
+    """
+    from src.data_loader import TASK_DEFAULT_METRICS, MATCHING_FEATURES, build_feature_cache
+
+    # Determine task-appropriate feature for bilateral comparison (Revision 10)
+    default_feat = TASK_DEFAULT_METRICS.get(task, 'amplitude')
+    fc = build_feature_cache()
+
+    task_data = fc[fc.task == task].copy()
+    if task_data.empty:
+        return _empty_fig('No data')
+
+    # Merge group info
+    group_map = group_stats_df[['tulip_id', 'group']].drop_duplicates()
+    task_data = task_data.merge(group_map, on='tulip_id', how='left')
+
+    # Pivot L/R
+    left = task_data[task_data.wrist == 'L'][['tulip_id', 'group', default_feat]].rename(
+        columns={default_feat: 'left_val'})
+    right = task_data[task_data.wrist == 'R'][['tulip_id', default_feat]].rename(
+        columns={default_feat: 'right_val'})
     merged = left.merge(right, on='tulip_id', how='inner')
 
     if merged.empty:
-        return _empty_fig('좌우 데이터 부족')
+        return _empty_fig('Insufficient bilateral data')
 
     fig = go.Figure()
-    max_val = max(merged['left_rms'].max(), merged['right_rms'].max()) * 1.1
+    max_val = max(merged['left_val'].max(), merged['right_val'].max()) * 1.1
 
     # Symmetry line
     fig.add_trace(go.Scatter(
@@ -1276,41 +1295,64 @@ def make_asymmetry_scatter(group_stats_df, task, highlight_tulip=None):
         name='Perfect Symmetry', hoverinfo='skip',
     ))
 
-    # Draw confirmed groups (not the selected patient)
+    # Confirmed groups
     for group in ['Healthy', 'PD']:
         gd = merged[(merged.group == group) & (merged.tulip_id != highlight_tulip)]
         if gd.empty:
             continue
         color = GROUP_COLORS_EXT[group]
         fig.add_trace(go.Scatter(
-            x=gd['left_rms'], y=gd['right_rms'],
+            x=gd['left_val'], y=gd['right_val'],
             mode='markers',
             marker=dict(size=9, color=color, opacity=0.7,
                         line=dict(width=1, color='white')),
-            text=gd['tulip_id'].apply(lambda x: x.replace('TULIP_', 'T')),
+            name=f'{group} ref.',
             hovertemplate='%{text}<br>L: %{x:.4f}<br>R: %{y:.4f}<extra></extra>',
-            name=f'{group} (confirmed)',
+            text=gd['tulip_id'].apply(lambda x: x.replace('TULIP_', 'T')),
         ))
 
-    # Selected patient — prominent
+    # Selected patient
     if highlight_tulip:
         pat = merged[merged.tulip_id == highlight_tulip]
         if not pat.empty:
+            l_val = pat['left_val'].values[0]
+            r_val = pat['right_val'].values[0]
+            from src.feature_engineering import calc_asymmetry_index
+            asym_idx = calc_asymmetry_index(l_val, r_val)
+
             fig.add_trace(go.Scatter(
-                x=pat['left_rms'], y=pat['right_rms'],
+                x=[l_val], y=[r_val],
                 mode='markers+text',
                 marker=dict(size=18, color='#805ad5', symbol='star',
                             line=dict(width=3, color='white')),
                 text=[f'★ {highlight_tulip}'],
                 textposition='top center',
-                textfont=dict(size=11, color='#805ad5', family='Arial Black'),
-                name=f'★ {highlight_tulip} (이 환자)',
+                textfont=dict(size=10, color='#805ad5'),
+                name=f'★ {highlight_tulip}',
+                hovertemplate=(
+                    f'<b>★ {highlight_tulip}</b><br>'
+                    f'Left: {l_val:.4f}<br>'
+                    f'Right: {r_val:.4f}<br>'
+                    f'Asymmetry Index: {asym_idx:.3f}<br><br>'
+                    f'<i>Metric: {FEATURE_LABELS.get(default_feat, default_feat)}<br>'
+                    f'Task: {task}<br>'
+                    f'Higher asymmetry may indicate lateralized motor involvement</i>'
+                    f'<extra></extra>'
+                ),
             ))
 
+            fig.add_annotation(
+                x=0.95, y=0.05, xref='paper', yref='paper',
+                text=f'Asymmetry: {asym_idx:.3f}',
+                showarrow=False, font=dict(size=12, color='#805ad5'),
+                bgcolor='rgba(255,255,255,0.8)',
+            )
+
+    feat_label = FEATURE_LABELS.get(default_feat, default_feat)
     fig.update_layout(
-        title=dict(text=f'좌우 대칭성 — {task}', font=dict(size=14)),
-        xaxis=dict(title='Left Wrist RMS', gridcolor='#edf2f7', range=[0, max_val]),
-        yaxis=dict(title='Right Wrist RMS', gridcolor='#edf2f7', range=[0, max_val]),
+        title=dict(text=f'Bilateral Comparison — {task} ({feat_label})', font=dict(size=13)),
+        xaxis=dict(title=f'Left {feat_label}', gridcolor='#edf2f7', range=[0, max_val]),
+        yaxis=dict(title=f'Right {feat_label}', gridcolor='#edf2f7', range=[0, max_val]),
         legend=dict(orientation='h', y=-0.15),
     )
     return _apply_defaults(fig, height=420)
@@ -1321,22 +1363,18 @@ def make_asymmetry_scatter(group_stats_df, task, highlight_tulip=None):
 # ══════════════════════════════════════════════════════════════
 
 def make_asymmetry_heatmap(feature_df, group_stats_df, tulip_id):
-    """Heatmap: Asymmetry Index per task (|L-R|/mean(L,R)).
-
-    Shows which tasks have highest bilateral difference for this patient.
-    """
+    """Asymmetry Index heatmap per task × feature."""
     from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
     from src.feature_engineering import calc_asymmetry_index
 
     subj = feature_df[feature_df.tulip_id == tulip_id]
     if subj.empty:
-        return _empty_fig('데이터 없음')
+        return _empty_fig('No data')
 
     features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
     tasks = SENSOR_TASKS
     task_labels = [TASK_LABELS_KR.get(t, t) for t in tasks]
 
-    # Compute asymmetry index per feature per task
     z_matrix = []
     for task in tasks:
         td = subj[subj.task == task]
@@ -1353,28 +1391,18 @@ def make_asymmetry_heatmap(feature_df, group_stats_df, tulip_id):
 
     z_arr = np.array(z_matrix)
     feat_labels = [FEATURE_LABELS[f] for f in features]
-
-    # Also compute group means for context
-    # Color: higher asymmetry = more red (PD-like)
-    fig = go.Figure(data=go.Heatmap(
-        z=z_arr,
-        x=feat_labels,
-        y=task_labels,
-        colorscale='RdYlGn_r',  # Red=high asym, Green=low
-        zmin=0, zmax=1.0,
-        text=np.round(z_arr, 3).astype(str),
-        texttemplate='%{text}',
-        textfont=dict(size=10),
-        hovertemplate='Task: %{y}<br>Feature: %{x}<br>Asymmetry: %{z:.3f}<extra></extra>',
-        colorbar=dict(title='Asymmetry<br>Index', thickness=12),
-    ))
-
-    # Average asymmetry annotation
     avg_asym = z_arr.mean()
+
+    fig = go.Figure(data=go.Heatmap(
+        z=z_arr, x=feat_labels, y=task_labels,
+        colorscale='RdYlGn_r', zmin=0, zmax=1.0,
+        text=np.round(z_arr, 3).astype(str),
+        texttemplate='%{text}', textfont=dict(size=10),
+        hovertemplate='Task: %{y}<br>Feature: %{x}<br>Asymmetry: %{z:.3f}<extra></extra>',
+        colorbar=dict(title='Asymmetry', thickness=12),
+    ))
     fig.update_layout(
-        title=dict(
-            text=f'비대칭 지수 (Asymmetry Index) — 평균: {avg_asym:.3f}',
-            font=dict(size=14)),
+        title=dict(text=f'Bilateral Asymmetry Index — Mean: {avg_asym:.3f}', font=dict(size=14)),
         xaxis=dict(tickfont=dict(size=11)),
         yaxis=dict(tickfont=dict(size=10), autorange='reversed'),
     )
@@ -1382,30 +1410,21 @@ def make_asymmetry_heatmap(feature_df, group_stats_df, tulip_id):
 
 
 def make_asym_waveform(tulip_id, task):
-    """Left vs Right waveform overlay for asymmetry visualization."""
+    """Left vs Right waveform overlay."""
     from src.data_loader import load_timeseries, TASK_LABELS_KR
-
     left_ts = load_timeseries(tulip_id, task, 'LeftWrist')
     right_ts = load_timeseries(tulip_id, task, 'RightWrist')
-
     if left_ts.empty and right_ts.empty:
-        return _empty_fig('센서 데이터 없음')
-
+        return _empty_fig('No sensor data')
     fig = go.Figure()
     if not left_ts.empty:
-        fig.add_trace(go.Scatter(
-            x=left_ts['time'], y=left_ts['accel_mag'], mode='lines',
-            name='Left Wrist', line=dict(color='#4299e1', width=1.5), opacity=0.8,
-        ))
+        fig.add_trace(go.Scatter(x=left_ts['time'], y=left_ts['accel_mag'],
+                                 mode='lines', name='Left', line=dict(color='#4299e1', width=1.5)))
     if not right_ts.empty:
-        fig.add_trace(go.Scatter(
-            x=right_ts['time'], y=right_ts['accel_mag'], mode='lines',
-            name='Right Wrist', line=dict(color='#fc8181', width=1.5), opacity=0.8,
-        ))
-
-    task_label = TASK_LABELS_KR.get(task, task)
+        fig.add_trace(go.Scatter(x=right_ts['time'], y=right_ts['accel_mag'],
+                                 mode='lines', name='Right', line=dict(color='#fc8181', width=1.5)))
     fig.update_layout(
-        title=dict(text=f'좌/우 Waveform — {task_label}', font=dict(size=14)),
+        title=dict(text=f'L/R Waveform — {TASK_LABELS_KR.get(task, task)}', font=dict(size=14)),
         xaxis=dict(title='Time (s)', gridcolor='#edf2f7'),
         yaxis=dict(title='Accel Magnitude (g)', gridcolor='#edf2f7'),
         legend=dict(orientation='h', y=-0.12),
@@ -1414,20 +1433,15 @@ def make_asym_waveform(tulip_id, task):
 
 
 def make_asym_feature_bars(feature_df, tulip_id, task):
-    """L vs R bar chart for selected task's features."""
+    """L vs R feature bars with asymmetry index."""
     from src.data_loader import TASK_LABELS_KR
     from src.feature_engineering import calc_asymmetry_index
-
     subj = feature_df[(feature_df.tulip_id == tulip_id) & (feature_df.task == task)]
     if subj.empty:
-        return _empty_fig('데이터 없음')
-
+        return _empty_fig('No data')
     features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
     feat_labels = [FEATURE_LABELS[f] for f in features]
-
-    left_vals = []
-    right_vals = []
-    asym_vals = []
+    left_vals, right_vals, asym_vals = [], [], []
     for feat in features:
         lv = subj[subj.wrist == 'L'][feat].values
         rv = subj[subj.wrist == 'R'][feat].values
@@ -1436,49 +1450,31 @@ def make_asym_feature_bars(feature_df, tulip_id, task):
         left_vals.append(l)
         right_vals.append(r)
         asym_vals.append(calc_asymmetry_index(l, r))
-
     fig = make_subplots(rows=1, cols=2, column_widths=[0.65, 0.35],
-                        subplot_titles=['좌/우 Feature 값', '비대칭 지수'])
-
-    fig.add_trace(go.Bar(
-        x=feat_labels, y=left_vals, name='Left',
-        marker=dict(color='#4299e1'), opacity=0.8,
-    ), row=1, col=1)
-    fig.add_trace(go.Bar(
-        x=feat_labels, y=right_vals, name='Right',
-        marker=dict(color='#fc8181'), opacity=0.8,
-    ), row=1, col=1)
-
-    # Asymmetry index bars (colored by severity)
+                        subplot_titles=['L/R Feature Values', 'Asymmetry Index'])
+    fig.add_trace(go.Bar(x=feat_labels, y=left_vals, name='Left',
+                         marker=dict(color='#4299e1')), row=1, col=1)
+    fig.add_trace(go.Bar(x=feat_labels, y=right_vals, name='Right',
+                         marker=dict(color='#fc8181')), row=1, col=1)
     colors = ['#38a169' if a < 0.3 else '#dd6b20' if a < 0.6 else '#e53e3e' for a in asym_vals]
-    fig.add_trace(go.Bar(
-        x=feat_labels, y=asym_vals, name='Asymmetry',
-        marker=dict(color=colors),
-        text=[f'{a:.2f}' for a in asym_vals], textposition='auto',
-        showlegend=False,
-    ), row=1, col=2)
-
-    fig.add_hline(y=0.3, line_dash='dash', line_color='#dd6b20',
-                  annotation_text='Threshold', row=1, col=2)
-
-    task_label = TASK_LABELS_KR.get(task, task)
-    fig.update_layout(
-        title=dict(text=f'Feature 좌우 비교 — {task_label}', font=dict(size=14)),
-        barmode='group', legend=dict(orientation='h', y=-0.15),
-    )
+    fig.add_trace(go.Bar(x=feat_labels, y=asym_vals, marker=dict(color=colors),
+                         text=[f'{a:.2f}' for a in asym_vals], textposition='auto',
+                         showlegend=False), row=1, col=2)
+    fig.add_hline(y=0.3, line_dash='dash', line_color='#dd6b20', row=1, col=2)
+    fig.update_layout(title=dict(text=f'Bilateral Features — {TASK_LABELS_KR.get(task, task)}',
+                                 font=dict(size=14)),
+                      barmode='group', legend=dict(orientation='h', y=-0.15))
     return _apply_defaults(fig, height=380)
 
 
 def make_asym_group_compare(group_stats_df, tulip_id):
-    """Compare this patient's overall asymmetry vs PD/Healthy group averages."""
-    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
+    """Patient asymmetry vs confirmed group distributions."""
+    from src.data_loader import SENSOR_TASKS
     from src.feature_engineering import calc_asymmetry_index
-
+    import pandas as pd
     df = group_stats_df.copy()
     if df.empty:
-        return _empty_fig('데이터 없음')
-
-    # Calculate asymmetry per subject per task
+        return _empty_fig('No data')
     asym_data = []
     for tid in df['tulip_id'].unique():
         for task in SENSOR_TASKS:
@@ -1486,60 +1482,34 @@ def make_asym_group_compare(group_stats_df, tulip_id):
             left = td[td.wrist == 'Left']['accel_rms'].values
             right = td[td.wrist == 'Right']['accel_rms'].values
             if len(left) > 0 and len(right) > 0:
-                asym = calc_asymmetry_index(left[0], right[0])
-                group = td.iloc[0]['group']
-                asym_data.append({'tulip_id': tid, 'task': task, 'group': group, 'asym': asym})
-
-    import pandas as pd
+                asym_data.append({'tulip_id': tid, 'group': td.iloc[0]['group'],
+                                  'asym': calc_asymmetry_index(left[0], right[0])})
     asym_df = pd.DataFrame(asym_data)
     if asym_df.empty:
-        return _empty_fig('데이터 부족')
-
-    # Mean asymmetry per subject
+        return _empty_fig('Insufficient data')
     subj_asym = asym_df.groupby(['tulip_id', 'group'])['asym'].mean().reset_index()
-
     fig = go.Figure()
-
     for group in ['Healthy', 'PD']:
         gd = subj_asym[subj_asym.group == group]
         if gd.empty:
             continue
-        color = GROUP_COLORS_EXT[group]
-        fig.add_trace(go.Box(
-            y=gd['asym'].values, name=f'{group} (confirmed)',
-            marker=dict(color=color, size=6),
-            line=dict(color=color),
-            boxmean='sd', boxpoints='all', jitter=0.3,
-        ))
-
-    # This patient
+        fig.add_trace(go.Box(y=gd['asym'].values, name=f'{group} (n={len(gd)})',
+                             marker=dict(color=GROUP_COLORS_EXT[group], size=6),
+                             line=dict(color=GROUP_COLORS_EXT[group]),
+                             boxmean='sd', boxpoints='all', jitter=0.3))
     pat_asym = subj_asym[subj_asym.tulip_id == tulip_id]
     if not pat_asym.empty:
         val = pat_asym['asym'].values[0]
         fig.add_trace(go.Scatter(
-            x=['Healthy (confirmed)', 'PD (confirmed)'],
-            y=[val, val],
-            mode='markers+lines',
-            marker=dict(size=16, color='#805ad5', symbol='star',
-                        line=dict(width=2, color='white')),
+            x=['Healthy (n={})'.format(len(subj_asym[subj_asym.group=='Healthy'])),
+               'PD (n={})'.format(len(subj_asym[subj_asym.group=='PD']))],
+            y=[val, val], mode='markers+lines',
+            marker=dict(size=16, color='#805ad5', symbol='star', line=dict(width=2, color='white')),
             line=dict(color='#805ad5', width=2, dash='dash'),
-            name=f'★ {tulip_id} (이 환자: {val:.3f})',
+            name=f'★ {tulip_id} ({val:.3f})',
         ))
-
-        # Which group is more asymmetric?
-        h_mean = subj_asym[subj_asym.group == 'Healthy']['asym'].mean()
-        p_mean = subj_asym[subj_asym.group == 'PD']['asym'].mean()
-        proximity = _calc_proximity_score(val, h_mean, p_mean)
-        closer = 'PD' if proximity > 50 else 'Healthy'
-        fig.add_annotation(
-            x=0.5, y=1.05, xref='paper', yref='paper',
-            text=f'비대칭도 → <b>{closer}</b>에 가까움 ({abs(proximity-50)*2:.0f}%)',
-            showarrow=False,
-            font=dict(size=13, color=GROUP_COLORS_EXT[closer]),
-        )
-
     fig.update_layout(
-        title=dict(text='평균 비대칭 지수 — 그룹 비교', font=dict(size=14)),
+        title=dict(text='Mean Asymmetry — Group Comparison', font=dict(size=14)),
         yaxis=dict(title='Mean Asymmetry Index', gridcolor='#edf2f7'),
         legend=dict(orientation='h', y=-0.15),
     )
@@ -1551,39 +1521,26 @@ def make_asym_group_compare(group_stats_df, tulip_id):
 # ══════════════════════════════════════════════════════════════
 
 def make_summary_radar(feature_df, group_stats_df, tulip_id):
-    """Radar chart: patient features normalized vs group ranges."""
+    """Radar chart: normalized feature profile vs reference cohorts."""
     from src.data_loader import SENSOR_TASKS
     from src.feature_engineering import calc_asymmetry_index
-
     if not tulip_id:
-        return _empty_fig('환자를 선택하세요')
-
+        return _empty_fig('Select a patient')
     group_map = group_stats_df[['tulip_id', 'group']].drop_duplicates()
     merged = feature_df.merge(group_map, on='tulip_id', how='left')
-
-    # 5 dimensions for radar
     dimensions = ['Tremor Power', 'Amplitude', 'Rhythm Irreg.', 'Mean Jerk', 'Asymmetry']
     features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
-
-    # Normalize each feature: patient percentile within all subjects
-    patient_scores = []
-    healthy_scores = []
-    pd_scores = []
-
+    patient_scores, healthy_scores, pd_scores = [], [], []
     for feat in features:
         all_vals = merged[feat].values
         h_mean = merged[merged.group == 'Healthy'][feat].mean()
         p_mean = merged[merged.group == 'PD'][feat].mean()
         pat_val = merged[merged.tulip_id == tulip_id][feat].mean()
-
-        # Normalize to 0-1 based on data range
         vmin, vmax = all_vals.min(), all_vals.max()
         norm = lambda v: (v - vmin) / (vmax - vmin) if vmax > vmin else 0.5
         patient_scores.append(norm(pat_val))
         healthy_scores.append(norm(h_mean))
         pd_scores.append(norm(p_mean))
-
-    # Asymmetry dimension
     subj_data = feature_df[feature_df.tulip_id == tulip_id]
     asym_vals = []
     for task in SENSOR_TASKS:
@@ -1593,42 +1550,25 @@ def make_summary_radar(feature_df, group_stats_df, tulip_id):
         if len(lv) > 0 and len(rv) > 0:
             asym_vals.append(calc_asymmetry_index(lv[0], rv[0]))
     pat_asym = np.mean(asym_vals) if asym_vals else 0
-    patient_scores.append(min(pat_asym / 0.5, 1.0))  # normalize: 0.5+ = max
-    healthy_scores.append(0.2)  # typical healthy asymmetry
-    pd_scores.append(0.7)  # typical PD asymmetry
-
+    patient_scores.append(min(pat_asym / 0.5, 1.0))
+    healthy_scores.append(0.2)
+    pd_scores.append(0.7)
     fig = go.Figure()
-
-    fig.add_trace(go.Scatterpolar(
-        r=healthy_scores + [healthy_scores[0]],
-        theta=dimensions + [dimensions[0]],
-        fill='toself', fillcolor='rgba(56,161,105,0.1)',
-        line=dict(color='#38a169', width=2),
-        name='Healthy 평균',
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=pd_scores + [pd_scores[0]],
-        theta=dimensions + [dimensions[0]],
-        fill='toself', fillcolor='rgba(229,62,62,0.1)',
-        line=dict(color='#e53e3e', width=2),
-        name='PD 평균',
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=patient_scores + [patient_scores[0]],
-        theta=dimensions + [dimensions[0]],
-        fill='toself', fillcolor='rgba(128,90,213,0.15)',
-        line=dict(color='#805ad5', width=3),
-        marker=dict(size=8, symbol='star', color='#805ad5'),
-        name=f'★ {tulip_id}',
-    ))
-
+    fig.add_trace(go.Scatterpolar(r=healthy_scores+[healthy_scores[0]], theta=dimensions+[dimensions[0]],
+                                   fill='toself', fillcolor='rgba(56,161,105,0.1)',
+                                   line=dict(color='#38a169', width=2), name='Healthy ref.'))
+    fig.add_trace(go.Scatterpolar(r=pd_scores+[pd_scores[0]], theta=dimensions+[dimensions[0]],
+                                   fill='toself', fillcolor='rgba(229,62,62,0.1)',
+                                   line=dict(color='#e53e3e', width=2), name='PD ref.'))
+    fig.add_trace(go.Scatterpolar(r=patient_scores+[patient_scores[0]], theta=dimensions+[dimensions[0]],
+                                   fill='toself', fillcolor='rgba(128,90,213,0.15)',
+                                   line=dict(color='#805ad5', width=3),
+                                   marker=dict(size=8, symbol='star', color='#805ad5'),
+                                   name=f'★ {tulip_id}'))
     fig.update_layout(
-        polar=dict(
-            radialaxis=dict(visible=True, range=[0, 1], gridcolor='#edf2f7'),
-        ),
-        title=dict(text=f'Feature Profile Radar — {tulip_id}', font=dict(size=14)),
-        legend=dict(orientation='h', y=-0.1),
-        height=420,
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1], gridcolor='#edf2f7')),
+        title=dict(text=f'Motor Phenotype Radar — {tulip_id}', font=dict(size=14)),
+        legend=dict(orientation='h', y=-0.1), height=420,
         font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
     )
     return fig

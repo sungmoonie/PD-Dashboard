@@ -175,9 +175,10 @@ def build_tab_comparison():
     task_options = get_task_list()
     return html.Div([
         html.Div([
-            html.H3('이 환자는 PD? Healthy? — 확정 그룹과 비교', className='viz-title'),
-            html.P('선택된 환자의 센서 데이터가 확정 PD 그룹과 Healthy 그룹 중 '
-                   '어디에 더 가까운지 시각적으로 비교합니다.',
+            html.H3('Motor Phenotype Proximity — Reference Cohort Comparison', className='viz-title'),
+            html.P('이 환자의 matched sensor analog가 확정 PD/Healthy reference cohort와 '
+                   '얼마나 유사한 motor phenotype을 보이는지 비교합니다. '
+                   '진단 확률이 아닌 reference 유사도입니다.',
                    className='tab-description'),
         ]),
         # Proximity Gauge (top — most important)

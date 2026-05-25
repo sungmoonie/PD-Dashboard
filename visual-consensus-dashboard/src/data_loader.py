@@ -350,106 +350,173 @@ def _estimate_fs(ts_df):
     return 1.0 / dt
 
 
-# Matching-aligned tasks (from matching methodology: Entrainment + Relaxed)
+# ──────────────────────────────────────────────────────────────
+# Alignment tasks & feature weights (matching pipeline-aligned)
+# ──────────────────────────────────────────────────────────────
+
 MATCHING_TASKS = ['Entrainment', 'Relaxed']
-# Features used in bilateral motor distance
 MATCHING_FEATURES = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
+
+# Feature weights aligned with MOTOR_FEATURE_WEIGHTS in matching pipeline
+# Tremor/rhythm weighted higher (clinical significance for PD)
+FEATURE_WEIGHTS = {
+    'tremor_power': 1.5,
+    'amplitude': 1.0,
+    'rhythm_irreg': 1.3,
+    'jerk': 1.0,
+}
+
+# Task-aware grouping (Revision 6 & 7)
+TASK_GROUPS = {
+    'rest': ['Relaxed', 'RelaxedTask'],
+    'repetitive': ['Entrainment', 'TouchIndex', 'TouchNose'],
+    'intentional': ['DrinkGlas', 'PointFinger', 'LiftHold'],
+    'postural': ['CrossArms', 'HoldWeight', 'StretchHold'],
+}
+
+# Task-specific default metrics (Revision 7)
+TASK_DEFAULT_METRICS = {
+    'Relaxed': 'tremor_power',
+    'RelaxedTask': 'tremor_power',
+    'Entrainment': 'rhythm_irreg',
+    'TouchIndex': 'rhythm_irreg',
+    'TouchNose': 'amplitude',
+    'DrinkGlas': 'amplitude',
+    'PointFinger': 'jerk',
+    'LiftHold': 'amplitude',
+    'CrossArms': 'tremor_power',
+    'HoldWeight': 'tremor_power',
+    'StretchHold': 'tremor_power',
+}
+
+
+def _weighted_euclidean(v1, v2, weights):
+    """Weighted Euclidean distance (Revision 3)."""
+    w = np.array(weights)
+    return float(np.sqrt(np.sum(w * (v1 - v2) ** 2) / np.sum(w)))
 
 
 @lru_cache(maxsize=1)
 def compute_proximity_scores():
-    """Compute matching-aligned proximity for all subjects.
+    """Compute motor phenotype proximity for all subjects.
 
-    Uses the same methodology as the TULIP→PADS matching:
-    - Only Entrainment + Relaxed tasks
-    - Z-score normalized features
-    - Euclidean distance to PD centroid vs Healthy centroid
-    - Score = d_healthy / (d_healthy + d_pd) × 100
-      → 100 = very PD-like, 0 = very Healthy-like
+    NOT a diagnostic probability. This measures reference cohort similarity:
+    how close this analog's motor phenotype is to confirmed PD vs Healthy centroids.
 
-    Returns: dict {tulip_id: {score, d_pd, d_healthy, per_feature: {...}}}
+    Revision 2: 16D vector (2 tasks × 2 wrists × 4 features)
+    Revision 3: Weighted Euclidean distance (FEATURE_WEIGHTS)
+    Revision 5: Returns n_pd, n_healthy for cohort size display
+
+    Returns: dict {tulip_id: {
+        score, d_pd, d_healthy,
+        per_task: {task: {per_feature}},
+        n_pd, n_healthy,
+        vector_dim,
+    }}
     """
     fc = build_feature_cache()
     patients = load_patients()
     cond_map = dict(zip(patients['tulip_id'], patients['condition']))
 
-    # Filter to matching tasks only
     match_data = fc[fc.task.isin(MATCHING_TASKS)].copy()
     if match_data.empty:
         return {}
 
-    # Build per-subject feature vector: mean of (L+R) for each feature on matching tasks
+    # Build 16D vector: task × wrist × feature (Revision 2)
+    # Order: [Entrainment_L_tremor, Entrainment_L_amp, ..., Relaxed_R_jerk]
+    vector_labels = []
+    weight_vector = []
+    for task in MATCHING_TASKS:
+        for wrist in ['L', 'R']:
+            for feat in MATCHING_FEATURES:
+                vector_labels.append(f'{task}_{wrist}_{feat}')
+                weight_vector.append(FEATURE_WEIGHTS[feat])
+    weight_vector = np.array(weight_vector)
+
     subject_vectors = {}
     for tulip_id in match_data['tulip_id'].unique():
         subj = match_data[match_data.tulip_id == tulip_id]
         vec = []
-        for feat in MATCHING_FEATURES:
-            # L and R separately (bilateral: L↔L, R↔R)
+        for task in MATCHING_TASKS:
+            task_data = subj[subj.task == task]
             for wrist in ['L', 'R']:
-                vals = subj[subj.wrist == wrist][feat].values
-                vec.append(np.mean(vals) if len(vals) > 0 else 0.0)
+                wrist_data = task_data[task_data.wrist == wrist]
+                for feat in MATCHING_FEATURES:
+                    vals = wrist_data[feat].values
+                    vec.append(float(vals[0]) if len(vals) > 0 else 0.0)
         subject_vectors[tulip_id] = np.array(vec)
 
     if not subject_vectors:
         return {}
 
-    # Identify confirmed groups (exclude NEW_CASES)
-    pd_vecs = []
-    healthy_vecs = []
+    # Confirmed groups
+    pd_vecs, healthy_vecs = [], []
     for tid, vec in subject_vectors.items():
-        cond = cond_map.get(tid, 'Unknown')
-        group = get_group_label(tid, cond)
+        group = get_group_label(tid, cond_map.get(tid, 'Unknown'))
         if group == 'PD':
             pd_vecs.append(vec)
         elif group == 'Healthy':
             healthy_vecs.append(vec)
 
-    if not pd_vecs or not healthy_vecs:
+    n_pd = len(pd_vecs)
+    n_healthy = len(healthy_vecs)
+    if n_pd == 0 or n_healthy == 0:
         return {}
 
     pd_vecs = np.array(pd_vecs)
     healthy_vecs = np.array(healthy_vecs)
 
-    # Z-score normalize using all confirmed subjects
+    # Z-score using confirmed subjects
     all_confirmed = np.vstack([pd_vecs, healthy_vecs])
     mean_vec = np.mean(all_confirmed, axis=0)
     std_vec = np.std(all_confirmed, axis=0)
-    std_vec[std_vec == 0] = 1.0  # avoid division by zero
+    std_vec[std_vec == 0] = 1.0
 
-    # Centroids in z-space
     pd_centroid = np.mean((pd_vecs - mean_vec) / std_vec, axis=0)
     healthy_centroid = np.mean((healthy_vecs - mean_vec) / std_vec, axis=0)
 
-    # Compute distance-based proximity for each subject
     results = {}
     for tid, vec in subject_vectors.items():
         z_vec = (vec - mean_vec) / std_vec
-        d_pd = np.sqrt(np.sum((z_vec - pd_centroid) ** 2))
-        d_healthy = np.sqrt(np.sum((z_vec - healthy_centroid) ** 2))
+
+        # Weighted Euclidean distance (Revision 3)
+        d_pd = _weighted_euclidean(z_vec, pd_centroid, weight_vector)
+        d_healthy = _weighted_euclidean(z_vec, healthy_centroid, weight_vector)
         total_d = d_pd + d_healthy
-        # Score: closer to PD = higher score
         score = (d_healthy / total_d * 100) if total_d > 0 else 50.0
 
-        # Per-feature breakdown (for each feature, which centroid is closer)
-        per_feature = {}
-        feat_idx = 0
-        for feat in MATCHING_FEATURES:
-            feat_d_pd = 0
-            feat_d_healthy = 0
-            for _ in ['L', 'R']:
-                feat_d_pd += (z_vec[feat_idx] - pd_centroid[feat_idx]) ** 2
-                feat_d_healthy += (z_vec[feat_idx] - healthy_centroid[feat_idx]) ** 2
-                feat_idx += 1
-            feat_d_pd = np.sqrt(feat_d_pd)
-            feat_d_healthy = np.sqrt(feat_d_healthy)
-            feat_total = feat_d_pd + feat_d_healthy
-            per_feature[feat] = (feat_d_healthy / feat_total * 100) if feat_total > 0 else 50.0
+        # Per-task breakdown
+        per_task = {}
+        idx = 0
+        for task in MATCHING_TASKS:
+            per_feat = {}
+            for wrist in ['L', 'R']:
+                for feat in MATCHING_FEATURES:
+                    z_val = z_vec[idx]
+                    pd_val = pd_centroid[idx]
+                    h_val = healthy_centroid[idx]
+                    d_p = abs(z_val - pd_val)
+                    d_h = abs(z_val - h_val)
+                    t = d_p + d_h
+                    key = f'{feat}_{wrist}'
+                    per_feat[key] = (d_h / t * 100) if t > 0 else 50.0
+                    idx += 1
+            # Aggregate per feature (mean of L+R)
+            task_summary = {}
+            for feat in MATCHING_FEATURES:
+                l_score = per_feat.get(f'{feat}_L', 50)
+                r_score = per_feat.get(f'{feat}_R', 50)
+                task_summary[feat] = (l_score + r_score) / 2
+            per_task[task] = task_summary
 
         results[tid] = {
             'score': float(score),
             'd_pd': float(d_pd),
             'd_healthy': float(d_healthy),
-            'per_feature': per_feature,
+            'per_task': per_task,
+            'n_pd': n_pd,
+            'n_healthy': n_healthy,
+            'vector_dim': len(vector_labels),
         }
 
     return results
