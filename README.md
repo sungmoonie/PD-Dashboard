@@ -390,21 +390,3 @@ visual-consensus-dashboard/
 
 ---
 
-## 10. 발표용 요약
-
-본 프로젝트는 파킨슨병 환자의 운동 기능을 **정량적으로 시각화**하여 의사의 **임상 의사결정을 지원**하는 Dash + Plotly 기반 full-stack interactive dashboard입니다.
-
-스마트워치 센서 데이터에서 추출한 tremor, rhythm, amplitude, asymmetry 등의 movement feature를 기반으로:
-
-1. 환자의 전반적 motor profile을 요약하고 (**환자 Overview**)
-2. 어떤 task에서 어떤 이상이 있는지 정밀 분석하고 (**Task-Feature Heatmap**)
-3. 좌우 비대칭을 정량 비교하고 (**좌우 비교**)
-4. 반복 운동의 bradykinesia 지표를 계산하고 (**Rhythm & Amplitude**)
-5. 건강대조군 대비 위치를 확인하고 (**Normative 비교**)
-6. 방문별 경과를 추적하고 (**경과 추적**)
-7. UPDRS 점수를 참고용으로 추정하고 (**UPDRS 추정**)
-8. 물리학 기반 위상 공간 분석 (**Phase Portrait**)
-9. 전체 cohort 대비 파형 비교 (**Signature Wall**)
-10. 임상적 우선순위를 버블맵으로 제시합니다 (**Evidence Map**)
-
-이를 통해 단순히 PD 여부를 예측하는 것이 아니라, **어떤 motor task에서 어떤 movement feature가 얼마나 비정상적인지**를 의사에게 정량적 근거로 제시합니다.
