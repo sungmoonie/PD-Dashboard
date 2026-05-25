@@ -52,15 +52,17 @@ def create_layout():
                 dcc.Tabs(id='main-tabs', value='tab-overview', className='custom-tabs', children=[
                     dcc.Tab(label='1. Patient Overview', value='tab-overview',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='2. Group Comparison', value='tab-comparison',
+                    dcc.Tab(label='2. Motor Landscape', value='tab-landscape',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='3. Bilateral Asymmetry', value='tab-asymmetry',
+                    dcc.Tab(label='3. Group Comparison', value='tab-comparison',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='4. Sensor Analysis', value='tab-sensor',
+                    dcc.Tab(label='4. Bilateral Asymmetry', value='tab-asymmetry',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='5. Video Analysis', value='tab-video',
+                    dcc.Tab(label='5. Sensor Analysis', value='tab-sensor',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='6. Clinical Summary', value='tab-summary',
+                    dcc.Tab(label='6. Video Analysis', value='tab-video',
+                            className='custom-tab', selected_className='custom-tab--selected'),
+                    dcc.Tab(label='7. Clinical Summary', value='tab-summary',
                             className='custom-tab', selected_className='custom-tab--selected'),
                 ]),
                 html.Div(id='tab-content', className='tab-content-area'),
@@ -305,8 +307,38 @@ def build_tab_summary():
     ])
 
 
+def build_tab_landscape():
+    """Tab 2: Clinical Motor Event Landscape."""
+    task_options = get_task_list()
+    return html.Div([
+        html.Div([
+            html.H3('Clinical Motor Event Landscape', className='viz-title'),
+            html.P('연속 센서 데이터를 임상적으로 의미 있는 movement event layer로 변환합니다. '
+                   'raw waveform이 아닌 movement pathology topology를 시각화합니다.',
+                   className='tab-description'),
+        ]),
+        # Task selector (landscape is task-specific)
+        html.Div([
+            html.Label('Task:', className='inline-label'),
+            dcc.Dropdown(id='landscape-task-dropdown', options=task_options,
+                         value='Entrainment', clearable=False, className='inline-dropdown'),
+        ], className='controls-row'),
+        # Main landscape
+        html.Div([
+            dcc.Graph(id='motor-landscape', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        # Bilateral Phase Space
+        html.Div([
+            html.H3('Bilateral Phase Space', className='viz-title'),
+            html.P('좌/우 motor energy 궤적. 대각선=대칭, 이탈=편측성.',
+                   className='tab-description'),
+            dcc.Graph(id='bilateral-phase-space', config={'displayModeBar': False}),
+        ], className='viz-block'),
+    ])
+
+
 def build_tab_video():
-    """Tab 5: Video Analysis."""
+    """Tab 6: Video Analysis."""
     return html.Div([
         # Controls
         html.Div([

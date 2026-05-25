@@ -31,11 +31,12 @@ from src.figures import (
     make_asymmetry_heatmap, make_asym_waveform,
     make_asym_feature_bars, make_asym_group_compare,
     make_summary_radar,
+    make_motor_landscape, make_bilateral_phase_space,
     _empty_fig,
 )
 from src.layout import (
     create_layout, build_tab_overview, build_tab_comparison,
-    build_tab_sensor, build_tab_video,
+    build_tab_sensor, build_tab_video, build_tab_landscape,
     build_tab_asymmetry, build_tab_summary,
 )
 
@@ -112,6 +113,8 @@ def serve_video(folder, camera):
 def render_tab(tab):
     if tab == 'tab-overview':
         return build_tab_overview()
+    elif tab == 'tab-landscape':
+        return build_tab_landscape()
     elif tab == 'tab-comparison':
         return build_tab_comparison()
     elif tab == 'tab-asymmetry':
@@ -231,7 +234,22 @@ def update_overview(tulip_id):
             nms_content, fig_matrix)
 
 
-# ─── Tab 2: Group Comparison (patient-level, no task) ───
+# ─── Tab 2: Motor Landscape ───
+@app.callback(
+    Output('motor-landscape', 'figure'),
+    Output('bilateral-phase-space', 'figure'),
+    Input('patient-dropdown', 'value'),
+    Input('landscape-task-dropdown', 'value'),
+)
+def update_landscape(tulip_id, task):
+    if not tulip_id or not task:
+        return _empty_fig(), _empty_fig()
+    fig_landscape = make_motor_landscape(tulip_id, task)
+    fig_phase = make_bilateral_phase_space(tulip_id, task)
+    return fig_landscape, fig_phase
+
+
+# ─── Tab 3: Group Comparison (patient-level, no task) ───
 @app.callback(
     Output('proximity-gauge', 'figure'),
     Output('task-profile-comparison', 'figure'),
