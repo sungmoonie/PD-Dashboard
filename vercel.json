@@ -8,6 +8,16 @@
   ],
   "routes": [
     {
+      "src": "/video/finger_tapping_left/(Camera[1-6]\\.mp4)",
+      "headers": { "Content-Type": "video/mp4" },
+      "dest": "/7. Finger_tapping_left/$1"
+    },
+    {
+      "src": "/video/finger_tapping_right/(Camera[1-6]\\.mp4)",
+      "headers": { "Content-Type": "video/mp4" },
+      "dest": "/8. FInger_tapping_right/$1"
+    },
+    {
       "src": "/(.*)",
       "dest": "visual-consensus-dashboard/api/index.py"
     }

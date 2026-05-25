@@ -293,18 +293,6 @@ def update_group_comparison(tulip_id, task, metric):
 
 
 # ── 5. 영상 분석 ────────────────────────────────────────────
-def _video_src(side, camera):
-    """Return video URL: local path if file exists, else GitHub raw URL."""
-    folder = 'finger_tapping_left' if side == 'left' else 'finger_tapping_right'
-    real_folder = VIDEO_MAP.get(folder, '')
-    local_path = os.path.join(VIDEO_BASE, real_folder, camera)
-    if os.path.exists(local_path):
-        return f'/video/{folder}/{camera}'
-    # Vercel: use GitHub raw URL directly
-    gh_folder = GITHUB_VIDEO_MAP.get(folder, '')
-    return f'{GITHUB_RAW_BASE}/{gh_folder}/{camera}'
-
-
 @app.callback(
     Output('video-player-container', 'children'),
     [Input('video-side-dropdown', 'value'), Input('video-camera-dropdown', 'value')],
@@ -312,7 +300,8 @@ def _video_src(side, camera):
 def update_video_player(side, camera):
     if not side or not camera:
         return html.P('카메라와 방향을 선택하세요.')
-    src = _video_src(side, camera)
+    folder = 'finger_tapping_left' if side == 'left' else 'finger_tapping_right'
+    src = f'/video/{folder}/{camera}'
     side_label = 'Left' if side == 'left' else 'Right'
     return [
         html.P(f'{side_label} Hand — {camera.replace(".mp4", "")}',
