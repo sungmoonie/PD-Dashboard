@@ -27,7 +27,7 @@ from src.figures import (
     make_rhythm_ladder, make_evidence_ribbon,
     make_new_vs_group_box, make_group_feature_comparison,
     make_task_profile_comparison, make_asymmetry_scatter,
-    _empty_fig,
+    make_proximity_gauge, _empty_fig,
 )
 from src.layout import (
     create_layout, build_tab_overview, build_tab_comparison,
@@ -226,6 +226,7 @@ def update_overview(tulip_id):
 
 # ─── Tab 2: Group Comparison ───
 @app.callback(
+    Output('proximity-gauge', 'figure'),
     Output('new-vs-group-box', 'figure'),
     Output('task-profile-comparison', 'figure'),
     Output('feature-group-comparison', 'figure'),
@@ -236,14 +237,15 @@ def update_overview(tulip_id):
 )
 def update_comparison(tulip_id, task, metric):
     if not tulip_id or not task:
-        return (_empty_fig(), _empty_fig(), _empty_fig(), _empty_fig())
+        return (_empty_fig(),) * 5
 
+    fig_gauge = make_proximity_gauge(group_stats, feature_cache, tulip_id)
     fig_box = make_new_vs_group_box(group_stats, task, metric, tulip_id)
     fig_profile = make_task_profile_comparison(group_stats, tulip_id)
     fig_features = make_group_feature_comparison(feature_cache, group_stats, tulip_id)
     fig_asym = make_asymmetry_scatter(group_stats, task, tulip_id)
 
-    return fig_box, fig_profile, fig_features, fig_asym
+    return fig_gauge, fig_box, fig_profile, fig_features, fig_asym
 
 
 # ─── Tab 3: Sensor Analysis ───

@@ -820,7 +820,8 @@ def make_evidence_ribbon(feature_df, tulip_id):
 
 
 # ══════════════════════════════════════════════════════════════
-#  NEW vs CONFIRMED GROUP COMPARISON
+#  NEW PATIENT vs CONFIRMED GROUP COMPARISON
+#  — 선택된 환자 1명에 대해 확정 PD/Healthy와 차이 시각화
 # ══════════════════════════════════════════════════════════════
 
 GROUP_COLORS_EXT = {
@@ -828,10 +829,18 @@ GROUP_COLORS_EXT = {
 }
 
 
-def make_new_vs_group_box(group_stats_df, task, metric='accel_rms', highlight_tulip=None):
-    """Box plot: Confirmed PD vs Healthy vs New Patient position.
+def _calc_proximity_score(patient_val, healthy_mean, pd_mean):
+    """Calculate 0-100 proximity: 0=Healthy, 100=PD."""
+    if pd_mean == healthy_mean:
+        return 50.0
+    score = (patient_val - healthy_mean) / (pd_mean - healthy_mean) * 100
+    return max(0, min(100, score))
 
-    Shows where the new patient falls relative to confirmed groups.
+
+def make_new_vs_group_box(group_stats_df, task, metric='accel_rms', highlight_tulip=None):
+    """Box plot: selected patient's position within confirmed PD/Healthy distributions.
+
+    Clear visual showing where THIS patient sits relative to each group.
     """
     df = group_stats_df[group_stats_df.task == task].copy()
     if df.empty:
@@ -846,111 +855,139 @@ def make_new_vs_group_box(group_stats_df, task, metric='accel_rms', highlight_tu
 
     fig = go.Figure()
 
-    # Draw confirmed groups as boxes
+    # Confirmed groups as violin/box
     for group in ['Healthy', 'PD']:
         gd = df[df.group == group]
         if gd.empty:
             continue
         color = GROUP_COLORS_EXT[group]
-        fig.add_trace(go.Box(
-            y=gd[metric].values, name=f'{group} (confirmed)',
-            marker=dict(color=color, size=6),
+        fig.add_trace(go.Violin(
+            y=gd[metric].values, name=f'{group}\n(n={len(gd)//2})',
+            marker=dict(color=color, size=5),
             line=dict(color=color),
-            boxmean='sd', jitter=0.3, pointpos=0, boxpoints='all',
+            box_visible=True, meanline_visible=True,
+            points='all', jitter=0.3,
+            side='both', opacity=0.7,
         ))
 
-    # Overlay new patient(s)
-    new_data = df[df.group == 'New']
-    if not new_data.empty:
-        for tid in new_data['tulip_id'].unique():
-            pat = new_data[new_data.tulip_id == tid]
-            is_selected = (tid == highlight_tulip)
+    # Selected patient marker + annotation
+    if highlight_tulip:
+        pat_data = df[df.tulip_id == highlight_tulip]
+        if not pat_data.empty:
+            pat_val = pat_data[metric].mean()
+            # Draw on both group positions to show relative position
             fig.add_trace(go.Scatter(
-                x=['Healthy (confirmed)'] * len(pat) + ['PD (confirmed)'] * len(pat),
-                y=list(pat[metric].values) + list(pat[metric].values),
-                mode='markers',
-                marker=dict(
-                    size=14 if is_selected else 11,
-                    color=GROUP_COLORS_EXT['New'],
-                    symbol='star',
-                    line=dict(width=2, color='white'),
-                ),
-                name=f'★ {tid} (New)',
+                x=['Healthy\n(n={})'.format(len(df[df.group == 'Healthy']) // 2),
+                   'PD\n(n={})'.format(len(df[df.group == 'PD']) // 2)],
+                y=[pat_val, pat_val],
+                mode='markers+lines',
+                marker=dict(size=16, color='#805ad5', symbol='star',
+                            line=dict(width=2, color='white')),
+                line=dict(color='#805ad5', width=2, dash='dash'),
+                name=f'★ {highlight_tulip} (이 환자)',
             ))
 
+            # Proximity annotation
+            h_mean = df[df.group == 'Healthy'][metric].mean()
+            p_mean = df[df.group == 'PD'][metric].mean()
+            proximity = _calc_proximity_score(pat_val, h_mean, p_mean)
+            closer_to = 'PD' if proximity > 50 else 'Healthy'
+            fig.add_annotation(
+                x=0.5, y=1.05, xref='paper', yref='paper',
+                text=f'<b>이 환자 → {closer_to}에 가까움</b> (유���도: {abs(proximity-50)*2:.0f}%)',
+                showarrow=False,
+                font=dict(size=13, color=GROUP_COLORS_EXT[closer_to]),
+                bgcolor='rgba(255,255,255,0.9)',
+                bordercolor=GROUP_COLORS_EXT[closer_to],
+                borderwidth=1, borderpad=4,
+            )
+
     fig.update_layout(
-        title=dict(text=f'New Patient vs Confirmed Groups — {task}',
+        title=dict(text=f'환자 위치 분석 — {task} ({metric_labels.get(metric, metric)})',
                    font=dict(size=14)),
         yaxis=dict(title=metric_labels.get(metric, metric), gridcolor='#edf2f7'),
         legend=dict(orientation='h', y=-0.15),
     )
-    return _apply_defaults(fig, height=420)
+    return _apply_defaults(fig, height=440)
 
 
 def make_group_feature_comparison(feature_df, group_stats_df, highlight_tulip=None):
-    """Bar chart: mean feature values per group (PD/Healthy) with new patient overlay.
+    """Radar-style bar chart: 4 features, PD mean / Healthy mean / This patient.
 
-    Shows all tasks averaged for each group, with new patient comparison.
+    Each feature normalized to show relative position clearly.
     """
     from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
 
-    if feature_df.empty:
-        return _empty_fig('데이터 없음')
+    if feature_df.empty or not highlight_tulip:
+        return _empty_fig('환자를 선택하세요')
 
     # Merge group info
     group_map = group_stats_df[['tulip_id', 'group']].drop_duplicates()
     merged = feature_df.merge(group_map, on='tulip_id', how='left')
 
-    # Mean per group across all tasks
     features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
     feat_labels = [FEATURE_LABELS[f] for f in features]
 
-    fig = make_subplots(rows=1, cols=4, subplot_titles=feat_labels,
-                        horizontal_spacing=0.08)
+    # Calculate means per group and patient value
+    healthy_means = []
+    pd_means = []
+    patient_vals = []
+    proximity_scores = []
 
-    for i, feat in enumerate(features, 1):
-        for group in ['Healthy', 'PD']:
-            gd = merged[merged.group == group]
-            mean_val = gd[feat].mean() if not gd.empty else 0
-            std_val = gd[feat].std() if not gd.empty else 0
-            color = GROUP_COLORS_EXT[group]
-            fig.add_trace(go.Bar(
-                x=[group], y=[mean_val],
-                error_y=dict(type='data', array=[std_val], visible=True),
-                marker=dict(color=color, opacity=0.7),
-                name=group if i == 1 else None,
-                showlegend=(i == 1), legendgroup=group,
-            ), row=1, col=i)
+    for feat in features:
+        h_data = merged[merged.group == 'Healthy'][feat]
+        p_data = merged[merged.group == 'PD'][feat]
+        pat_data = merged[merged.tulip_id == highlight_tulip][feat]
 
-        # New patient value
-        if highlight_tulip:
-            new_data = merged[merged.tulip_id == highlight_tulip]
-            if not new_data.empty:
-                new_mean = new_data[feat].mean()
-                fig.add_trace(go.Scatter(
-                    x=['Healthy', 'PD'], y=[new_mean, new_mean],
-                    mode='lines+markers',
-                    line=dict(color=GROUP_COLORS_EXT['New'], width=2, dash='dash'),
-                    marker=dict(size=10, symbol='star', color=GROUP_COLORS_EXT['New']),
-                    name=f'★ {highlight_tulip}' if i == 1 else None,
-                    showlegend=(i == 1), legendgroup='new',
-                ), row=1, col=i)
+        h_mean = h_data.mean() if not h_data.empty else 0
+        p_mean = p_data.mean() if not p_data.empty else 0
+        pat_val = pat_data.mean() if not pat_data.empty else 0
+
+        healthy_means.append(h_mean)
+        pd_means.append(p_mean)
+        patient_vals.append(pat_val)
+        proximity_scores.append(_calc_proximity_score(pat_val, h_mean, p_mean))
+
+    fig = go.Figure()
+
+    # Grouped bars: Healthy / Patient / PD
+    fig.add_trace(go.Bar(
+        x=feat_labels, y=healthy_means, name='Healthy 평균',
+        marker=dict(color='#38a169', opacity=0.6),
+    ))
+    fig.add_trace(go.Bar(
+        x=feat_labels, y=patient_vals, name=f'★ {highlight_tulip}',
+        marker=dict(color='#805ad5', opacity=0.9,
+                    line=dict(width=2, color='#553c9a')),
+    ))
+    fig.add_trace(go.Bar(
+        x=feat_labels, y=pd_means, name='PD 평균',
+        marker=dict(color='#e53e3e', opacity=0.6),
+    ))
+
+    # Add proximity score text at top
+    avg_proximity = np.mean(proximity_scores)
+    overall_closer = 'PD' if avg_proximity > 50 else 'Healthy'
+    fig.add_annotation(
+        x=0.5, y=1.08, xref='paper', yref='paper',
+        text=f'<b>종합 유사도: {overall_closer}에 {abs(avg_proximity-50)*2:.0f}% 가까움</b>',
+        showarrow=False,
+        font=dict(size=13, color=GROUP_COLORS_EXT[overall_closer]),
+    )
 
     fig.update_layout(
-        title=dict(text='Feature Comparison: Confirmed Groups vs New Patient',
-                   font=dict(size=14)),
-        legend=dict(orientation='h', y=-0.15),
+        title=dict(text=f'Feature별 그룹 비교 — {highlight_tulip}', font=dict(size=14)),
         barmode='group',
-        height=380,
-        **LAYOUT_DEFAULTS,
+        yaxis=dict(title='Feature Value', gridcolor='#edf2f7'),
+        legend=dict(orientation='h', y=-0.15),
     )
-    return fig
+    return _apply_defaults(fig, height=400)
 
 
 def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
-    """Line + band chart: task-wise accel_rms profile per group.
+    """Task-wise movement profile: PD/Healthy bands + selected patient line.
 
-    PD mean±SD band, Healthy mean±SD band, new patient line overlaid.
+    Shows which tasks deviate most from healthy range.
     """
     from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
 
@@ -963,6 +1000,7 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
 
     fig = go.Figure()
 
+    group_means = {}
     for group, color in [('Healthy', '#38a169'), ('PD', '#e53e3e')]:
         gd = df[df.group == group]
         means = []
@@ -974,23 +1012,25 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
 
         means = np.array(means)
         stds = np.array(stds)
+        group_means[group] = means
 
         # Band (mean ± SD)
         fig.add_trace(go.Scatter(
             x=task_labels + task_labels[::-1],
             y=list(means + stds) + list((means - stds)[::-1]),
-            fill='toself', fillcolor=f'rgba({",".join(str(int(color[i:i+2], 16)) for i in (1,3,5))},0.15)',
+            fill='toself',
+            fillcolor=f'rgba({",".join(str(int(color[i:i+2], 16)) for i in (1,3,5))},0.12)',
             line=dict(width=0), showlegend=False, hoverinfo='skip',
         ))
         # Mean line
         fig.add_trace(go.Scatter(
             x=task_labels, y=means, mode='lines+markers',
             line=dict(color=color, width=2),
-            marker=dict(size=6, color=color),
+            marker=dict(size=5, color=color),
             name=f'{group} (mean±SD)',
         ))
 
-    # New patient overlay
+    # Selected patient overlay with clear emphasis
     if highlight_tulip:
         new_data = df[df.tulip_id == highlight_tulip]
         if not new_data.empty:
@@ -998,17 +1038,31 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
             for task in tasks:
                 td = new_data[new_data.task == task]['accel_rms']
                 new_vals.append(td.mean() if len(td) > 0 else 0)
+
             fig.add_trace(go.Scatter(
                 x=task_labels, y=new_vals,
                 mode='lines+markers',
-                line=dict(color='#805ad5', width=3, dash='dot'),
-                marker=dict(size=10, symbol='star', color='#805ad5',
+                line=dict(color='#805ad5', width=3),
+                marker=dict(size=11, symbol='star', color='#805ad5',
                             line=dict(width=2, color='white')),
-                name=f'★ {highlight_tulip} (New)',
+                name=f'★ {highlight_tulip} (이 환자)',
             ))
 
+            # Mark tasks where patient is closer to PD than Healthy
+            if 'Healthy' in group_means and 'PD' in group_means:
+                for i, (val, h, p) in enumerate(zip(new_vals, group_means['Healthy'], group_means['PD'])):
+                    prox = _calc_proximity_score(val, h, p)
+                    if prox > 70:  # clearly PD-like
+                        fig.add_annotation(
+                            x=task_labels[i], y=val,
+                            text='⚠', showarrow=False,
+                            font=dict(size=14, color='#e53e3e'),
+                            yshift=15,
+                        )
+
     fig.update_layout(
-        title=dict(text='Task Profile — New Patient vs Confirmed Groups', font=dict(size=14)),
+        title=dict(text=f'Task별 Movement Profile — 이 환자 vs 확정 그룹',
+                   font=dict(size=14)),
         xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
         yaxis=dict(title='Accel RMS (g)', gridcolor='#edf2f7'),
         legend=dict(orientation='h', y=-0.2, font=dict(size=11)),
@@ -1016,8 +1070,90 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
     return _apply_defaults(fig, height=450)
 
 
+def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
+    """Overall proximity gauge: how close is this patient to PD vs Healthy.
+
+    Shows a clear visual indicator combining all features and tasks.
+    """
+    if not highlight_tulip:
+        return _empty_fig('환자를 선택하세요')
+
+    df = group_stats_df.copy()
+    # Merge feature data with group
+    group_map = df[['tulip_id', 'group']].drop_duplicates()
+    merged = feature_df.merge(group_map, on='tulip_id', how='left')
+
+    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
+    scores = []
+
+    for feat in features:
+        h_mean = merged[merged.group == 'Healthy'][feat].mean()
+        p_mean = merged[merged.group == 'PD'][feat].mean()
+        pat_val = merged[merged.tulip_id == highlight_tulip][feat].mean()
+        scores.append(_calc_proximity_score(pat_val, h_mean, p_mean))
+
+    # Also include accel_rms across tasks
+    h_rms = df[df.group == 'Healthy']['accel_rms'].mean()
+    p_rms = df[df.group == 'PD']['accel_rms'].mean()
+    pat_rms = df[df.tulip_id == highlight_tulip]['accel_rms'].mean()
+    scores.append(_calc_proximity_score(pat_rms, h_rms, p_rms))
+
+    overall = np.mean(scores)
+
+    fig = go.Figure()
+
+    # Gauge-like horizontal bar
+    fig.add_trace(go.Bar(
+        x=[100], y=[''], orientation='h',
+        marker=dict(color='#fed7d7'), showlegend=False,
+        base=0, width=0.5,
+    ))
+    fig.add_trace(go.Bar(
+        x=[overall], y=[''], orientation='h',
+        marker=dict(
+            color='#805ad5' if 40 <= overall <= 60
+            else '#e53e3e' if overall > 60
+            else '#38a169',
+        ),
+        showlegend=False, base=0, width=0.5,
+        text=f'{overall:.0f}%', textposition='inside',
+        textfont=dict(size=18, color='white'),
+    ))
+
+    # Feature-wise breakdown
+    feat_names = ['Tremor', 'Amplitude', 'Rhythm', 'Jerk', 'Movement']
+    for i, (name, score) in enumerate(zip(feat_names, scores)):
+        color = '#e53e3e' if score > 60 else '#38a169' if score < 40 else '#805ad5'
+        fig.add_trace(go.Bar(
+            x=[score], y=[name], orientation='h',
+            marker=dict(color=color, opacity=0.7),
+            showlegend=False,
+            text=f'{score:.0f}%', textposition='inside',
+            textfont=dict(size=11, color='white'),
+        ))
+
+    fig.add_vline(x=50, line_dash='dash', line_color='#718096',
+                  annotation_text='경계선', annotation_position='top')
+
+    closer_to = 'PD' if overall > 50 else 'Healthy'
+    fig.update_layout(
+        title=dict(
+            text=f'종합 PD 유사도: <b>{overall:.0f}%</b> → <b>{closer_to}</b>에 가까움',
+            font=dict(size=15),
+        ),
+        xaxis=dict(title='← Healthy (0%)        PD (100%) →',
+                   range=[0, 100], gridcolor='#edf2f7', dtick=25),
+        yaxis=dict(autorange='reversed'),
+        height=280,
+        plot_bgcolor='white', paper_bgcolor='white',
+        font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
+        margin=dict(l=80, r=20, t=60, b=50),
+    )
+    return fig
+
+
 def make_asymmetry_scatter(group_stats_df, task, highlight_tulip=None):
-    """L vs R scatter with group coloring and new patient highlight."""
+    """L vs R scatter — selected patient highlighted against confirmed groups."""
     df = group_stats_df[group_stats_df.task == task].copy()
     if df.empty:
         return _empty_fig('데이터 없음')
@@ -1041,28 +1177,39 @@ def make_asymmetry_scatter(group_stats_df, task, highlight_tulip=None):
         name='Perfect Symmetry', hoverinfo='skip',
     ))
 
-    for group in ['Healthy', 'PD', 'New']:
-        gd = merged[merged.group == group]
+    # Draw confirmed groups (not the selected patient)
+    for group in ['Healthy', 'PD']:
+        gd = merged[(merged.group == group) & (merged.tulip_id != highlight_tulip)]
         if gd.empty:
             continue
         color = GROUP_COLORS_EXT[group]
-        is_new = (group == 'New')
         fig.add_trace(go.Scatter(
             x=gd['left_rms'], y=gd['right_rms'],
-            mode='markers+text',
-            marker=dict(
-                size=14 if is_new else 9,
-                color=color, opacity=0.9,
-                symbol='star' if is_new else 'circle',
-                line=dict(width=2 if is_new else 1, color='white'),
-            ),
+            mode='markers',
+            marker=dict(size=9, color=color, opacity=0.7,
+                        line=dict(width=1, color='white')),
             text=gd['tulip_id'].apply(lambda x: x.replace('TULIP_', 'T')),
-            textposition='top center', textfont=dict(size=8 if not is_new else 10),
-            name=f'{"★ " if is_new else ""}{group}',
+            hovertemplate='%{text}<br>L: %{x:.4f}<br>R: %{y:.4f}<extra></extra>',
+            name=f'{group} (confirmed)',
         ))
 
+    # Selected patient — prominent
+    if highlight_tulip:
+        pat = merged[merged.tulip_id == highlight_tulip]
+        if not pat.empty:
+            fig.add_trace(go.Scatter(
+                x=pat['left_rms'], y=pat['right_rms'],
+                mode='markers+text',
+                marker=dict(size=18, color='#805ad5', symbol='star',
+                            line=dict(width=3, color='white')),
+                text=[f'★ {highlight_tulip}'],
+                textposition='top center',
+                textfont=dict(size=11, color='#805ad5', family='Arial Black'),
+                name=f'★ {highlight_tulip} (이 환자)',
+            ))
+
     fig.update_layout(
-        title=dict(text=f'좌우 대칭성 — {task} (New vs Confirmed)', font=dict(size=14)),
+        title=dict(text=f'좌우 대칭성 — {task}', font=dict(size=14)),
         xaxis=dict(title='Left Wrist RMS', gridcolor='#edf2f7', range=[0, max_val]),
         yaxis=dict(title='Right Wrist RMS', gridcolor='#edf2f7', range=[0, max_val]),
         legend=dict(orientation='h', y=-0.15),

@@ -169,15 +169,19 @@ def build_tab_overview():
 
 
 def build_tab_comparison():
-    """Tab 2: Group Comparison — New patient vs PD/Healthy confirmed."""
+    """Tab 2: Group Comparison — selected patient vs confirmed PD/Healthy."""
     task_options = get_task_list()
     return html.Div([
         html.Div([
-            html.H3('New Patient vs Confirmed Groups', className='viz-title'),
-            html.P('★ 표시 = New Patient (TULIP_001, TULIP_008). '
-                   '확정된 PD/Healthy 그룹과 비교합니다.',
+            html.H3('이 환자는 PD? Healthy? — 확정 그룹과 비교', className='viz-title'),
+            html.P('선택된 환자의 센서 데이터가 확정 PD 그룹과 Healthy 그룹 중 '
+                   '어디에 더 가까운지 시각적으로 비교합니다.',
                    className='tab-description'),
         ]),
+        # Proximity Gauge (top — most important)
+        html.Div([
+            dcc.Graph(id='proximity-gauge', config={'displayModeBar': False}),
+        ], className='viz-block'),
         # Controls
         html.Div([
             html.Div([
@@ -195,21 +199,22 @@ def build_tab_comparison():
                 ], value='accel_rms', clearable=False, className='inline-dropdown'),
             ], className='inline-control'),
         ], className='controls-row'),
-        # Charts
+        # Feature comparison (side by side bars)
+        html.Div([
+            dcc.Graph(id='feature-group-comparison', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        # Position in distribution
         html.Div([
             dcc.Graph(id='new-vs-group-box', config={'displayModeBar': False}),
         ], className='viz-block'),
+        # Task profile
         html.Div([
             dcc.Graph(id='task-profile-comparison', config={'displayModeBar': False}),
         ], className='viz-block'),
+        # Asymmetry scatter
         html.Div([
-            html.Div([
-                dcc.Graph(id='feature-group-comparison', config={'displayModeBar': False}),
-            ], className='chart-half'),
-            html.Div([
-                dcc.Graph(id='asymmetry-scatter', config={'displayModeBar': False}),
-            ], className='chart-half'),
-        ], className='chart-row'),
+            dcc.Graph(id='asymmetry-scatter', config={'displayModeBar': False}),
+        ], className='viz-block'),
     ])
 
 

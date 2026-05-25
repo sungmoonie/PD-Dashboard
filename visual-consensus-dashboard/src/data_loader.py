@@ -274,18 +274,23 @@ def get_subject_list_labelfree():
 
 
 def get_subject_list_hybrid():
-    """Return dropdown: New cases label-free, confirmed cases show group."""
+    """Return dropdown: New cases first (top), then confirmed cases."""
     patients_df = load_patients()
-    options = []
+    new_options = []
+    confirmed_options = []
     for _, row in patients_df.iterrows():
         tid = row['tulip_id']
         group = get_group_label(tid, row['condition'])
         if group == 'New':
             label = f"★ {tid} — New Patient ({row['age']}y, {row['gender']})"
+            new_options.append({'label': label, 'value': tid})
         else:
-            label = f"{tid} — {group} ({row['age']}y, {row['gender']})"
-        options.append({'label': label, 'value': tid})
-    return sorted(options, key=lambda x: x['value'])
+            label = f"  {tid} — {group} ({row['age']}y, {row['gender']})"
+            confirmed_options.append({'label': label, 'value': tid})
+    # New patients first, then confirmed sorted
+    new_options.sort(key=lambda x: x['value'])
+    confirmed_options.sort(key=lambda x: x['value'])
+    return new_options + confirmed_options
 
 
 @lru_cache(maxsize=1)
