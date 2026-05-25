@@ -21,17 +21,22 @@ from src.feature_engineering import (
     calc_signal_rms, calc_asymmetry_index, calc_signal_stats,
 )
 from src.figures import (
-    make_timeseries_plot, make_updrs_heatmap, make_clinician_comparison_bar,
+    make_timeseries_plot,
     make_motion_timeline, make_lr_tapping_comparison,
     make_bilateral_matrix, make_spectral_fingerprint,
     make_rhythm_ladder, make_evidence_ribbon,
     make_new_vs_group_box, make_group_feature_comparison,
     make_task_profile_comparison, make_asymmetry_scatter,
-    make_proximity_gauge, _empty_fig,
+    make_proximity_gauge,
+    make_asymmetry_heatmap, make_asym_waveform,
+    make_asym_feature_bars, make_asym_group_compare,
+    make_summary_radar,
+    _empty_fig,
 )
 from src.layout import (
     create_layout, build_tab_overview, build_tab_comparison,
-    build_tab_sensor, build_tab_updrs, build_tab_video,
+    build_tab_sensor, build_tab_video,
+    build_tab_asymmetry, build_tab_summary,
 )
 
 # ─── Pre-load Data ───
@@ -109,12 +114,14 @@ def render_tab(tab):
         return build_tab_overview()
     elif tab == 'tab-comparison':
         return build_tab_comparison()
+    elif tab == 'tab-asymmetry':
+        return build_tab_asymmetry()
     elif tab == 'tab-sensor':
         return build_tab_sensor()
-    elif tab == 'tab-updrs':
-        return build_tab_updrs()
     elif tab == 'tab-video':
         return build_tab_video()
+    elif tab == 'tab-summary':
+        return build_tab_summary()
     return html.Div('Select a tab')
 
 
@@ -276,36 +283,161 @@ def update_sensor(tulip_id, task):
     return fig_spectral, fig_rhythm, fig_ribbon, fig_l, fig_r
 
 
-# ─── Tab 4: UPDRS ───
+# ─── Tab 3: Bilateral Asymmetry ───
 @app.callback(
-    Output('updrs-heatmap', 'figure'),
+    Output('asymmetry-heatmap', 'figure'),
+    Output('asym-group-compare', 'figure'),
     Input('patient-dropdown', 'value'),
 )
-def update_updrs_heatmap(tulip_id):
-    return make_updrs_heatmap(labels_df)
+def update_asymmetry_overview(tulip_id):
+    if not tulip_id:
+        return _empty_fig(), _empty_fig()
+    fig_heatmap = make_asymmetry_heatmap(feature_cache, group_stats, tulip_id)
+    fig_group = make_asym_group_compare(group_stats, tulip_id)
+    return fig_heatmap, fig_group
 
 
 @app.callback(
-    Output('clinician-comparison-bar', 'figure'),
-    Output('updrs-detail-text', 'children'),
-    Input('updrs-heatmap', 'clickData'),
-    State('patient-dropdown', 'value'),
+    Output('asym-waveform', 'figure'),
+    Output('asym-feature-bars', 'figure'),
+    Input('patient-dropdown', 'value'),
+    Input('asym-task-dropdown', 'value'),
 )
-def update_updrs_detail(click_data, tulip_id):
-    if not click_data or not tulip_id:
-        return _empty_fig('Cell을 클릭하세요'), ''
+def update_asymmetry_detail(tulip_id, task):
+    if not tulip_id or not task:
+        return _empty_fig(), _empty_fig()
+    fig_wave = make_asym_waveform(tulip_id, task)
+    fig_bars = make_asym_feature_bars(feature_cache, tulip_id, task)
+    return fig_wave, fig_bars
 
-    point = click_data['points'][0]
-    updrs_name = point.get('x', '')
-    clicked_tulip = point.get('y', tulip_id)
 
-    fig = make_clinician_comparison_bar(labels_df, clicked_tulip, updrs_name)
-    detail = html.Div([
-        html.Strong(f'{clicked_tulip} — {updrs_name}'),
-        html.Br(),
-        html.Span('Clinician 3인의 개별 score와 평균 비교'),
+# ─── Tab 6: Clinical Summary ───
+@app.callback(
+    Output('summary-verdict', 'children'),
+    Output('summary-findings', 'children'),
+    Output('summary-radar', 'figure'),
+    Output('summary-task-table', 'children'),
+    Input('patient-dropdown', 'value'),
+)
+def update_summary(tulip_id):
+    if not tulip_id:
+        return '', '', _empty_fig(), ''
+
+    from src.figures import _calc_proximity_score
+    from src.feature_engineering import calc_asymmetry_index
+    import numpy as np_local
+
+    # Calculate overall proximity
+    group_map = group_stats[['tulip_id', 'group']].drop_duplicates()
+    merged = feature_cache.merge(group_map, on='tulip_id', how='left')
+
+    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
+    scores = {}
+    for feat in features:
+        h_mean = merged[merged.group == 'Healthy'][feat].mean()
+        p_mean = merged[merged.group == 'PD'][feat].mean()
+        pat_val = merged[merged.tulip_id == tulip_id][feat].mean()
+        scores[feat] = _calc_proximity_score(pat_val, h_mean, p_mean)
+
+    # Asymmetry score
+    subj = feature_cache[feature_cache.tulip_id == tulip_id]
+    asym_vals = []
+    for task in SENSOR_TASKS:
+        td = subj[subj.task == task]
+        lv = td[td.wrist == 'L']['amplitude'].values
+        rv = td[td.wrist == 'R']['amplitude'].values
+        if len(lv) > 0 and len(rv) > 0:
+            asym_vals.append(calc_asymmetry_index(lv[0], rv[0]))
+    mean_asym = np_local.mean(asym_vals) if asym_vals else 0
+
+    overall = np_local.mean(list(scores.values()))
+    closer = 'PD' if overall > 50 else 'Healthy'
+    is_new = tulip_id in NEW_CASES
+
+    # Verdict
+    if is_new:
+        verdict_color = '#805ad5' if 40 <= overall <= 60 else (
+            '#e53e3e' if overall > 60 else '#38a169')
+        verdict = html.Div([
+            html.H2(f'종합 판단: {closer}에 {abs(overall-50)*2:.0f}% 유사',
+                    style={'color': verdict_color, 'marginBottom': '8px'}),
+            html.P(f'PD 유사도: {overall:.1f}% | 평균 비대칭: {mean_asym:.3f}',
+                   style={'fontSize': '14px', 'color': '#4a5568'}),
+            html.P('근거: tremor power, amplitude, rhythm irregularity, jerk, '
+                   'bilateral asymmetry를 종합하여 확정 PD/Healthy군 평균과의 거리 기반 산출',
+                   style={'fontSize': '12px', 'color': '#718096', 'marginTop': '8px'}),
+        ], className='verdict-box')
+    else:
+        row = patients_df[patients_df.tulip_id == tulip_id]
+        condition = row.iloc[0]['condition'] if not row.empty else '—'
+        verdict = html.Div([
+            html.H2(f'확정: {condition}', style={'color': '#2c3e50'}),
+            html.P(f'Reference patient — PD 유사도: {overall:.1f}%'),
+        ], className='verdict-box')
+
+    # Key findings
+    finding_items = []
+    for feat, score in scores.items():
+        from src.figures import FEATURE_LABELS
+        label = FEATURE_LABELS.get(feat, feat)
+        if score > 65:
+            finding_items.append(
+                html.Li(f'{label}: PD-like ({score:.0f}%)',
+                        className='finding-pd'))
+        elif score < 35:
+            finding_items.append(
+                html.Li(f'{label}: Healthy-like ({score:.0f}%)',
+                        className='finding-healthy'))
+        else:
+            finding_items.append(
+                html.Li(f'{label}: 경계 ({score:.0f}%)',
+                        className='finding-border'))
+
+    if mean_asym > 0.3:
+        finding_items.append(
+            html.Li(f'비대칭 지수: {mean_asym:.3f} (높음 — PD 시사)',
+                    className='finding-pd'))
+    else:
+        finding_items.append(
+            html.Li(f'비대칭 지수: {mean_asym:.3f} (정상 범위)',
+                    className='finding-healthy'))
+
+    findings = html.Div([
+        html.H3('주요 소견', className='viz-title'),
+        html.Ul(finding_items, className='findings-list'),
     ])
-    return fig, detail
+
+    # Radar
+    fig_radar = make_summary_radar(feature_cache, group_stats, tulip_id)
+
+    # Task table
+    task_rows = []
+    for task in SENSOR_TASKS:
+        td = subj[subj.task == task]
+        lv = td[td.wrist == 'L']['amplitude'].values
+        rv = td[td.wrist == 'R']['amplitude'].values
+        l_amp = f'{lv[0]:.4f}' if len(lv) > 0 else '—'
+        r_amp = f'{rv[0]:.4f}' if len(rv) > 0 else '—'
+        asym = calc_asymmetry_index(lv[0], rv[0]) if (len(lv) > 0 and len(rv) > 0) else 0
+        asym_class = 'high-asym' if asym > 0.3 else ''
+        task_rows.append(html.Tr([
+            html.Td(TASK_LABELS_KR.get(task, task)),
+            html.Td(l_amp),
+            html.Td(r_amp),
+            html.Td(f'{asym:.3f}', className=asym_class),
+        ]))
+
+    task_table = html.Div([
+        html.H3('Task별 요약', className='viz-title'),
+        html.Table([
+            html.Thead(html.Tr([
+                html.Th('Task'), html.Th('Left Amp'), html.Th('Right Amp'), html.Th('Asymmetry'),
+            ])),
+            html.Tbody(task_rows),
+        ], className='summary-table'),
+    ])
+
+    return verdict, findings, fig_radar, task_table
 
 
 # ─── Tab 5: Video ───

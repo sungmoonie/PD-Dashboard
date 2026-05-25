@@ -1215,3 +1215,321 @@ def make_asymmetry_scatter(group_stats_df, task, highlight_tulip=None):
         legend=dict(orientation='h', y=-0.15),
     )
     return _apply_defaults(fig, height=420)
+
+
+# ══════════════════════════════════════════════════════════════
+#  BILATERAL ASYMMETRY TAB
+# ══════════════════════════════════════════════════════════════
+
+def make_asymmetry_heatmap(feature_df, group_stats_df, tulip_id):
+    """Heatmap: Asymmetry Index per task (|L-R|/mean(L,R)).
+
+    Shows which tasks have highest bilateral difference for this patient.
+    """
+    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
+    from src.feature_engineering import calc_asymmetry_index
+
+    subj = feature_df[feature_df.tulip_id == tulip_id]
+    if subj.empty:
+        return _empty_fig('데이터 없음')
+
+    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
+    tasks = SENSOR_TASKS
+    task_labels = [TASK_LABELS_KR.get(t, t) for t in tasks]
+
+    # Compute asymmetry index per feature per task
+    z_matrix = []
+    for task in tasks:
+        td = subj[subj.task == task]
+        row = []
+        for feat in features:
+            lv = td[td.wrist == 'L'][feat].values
+            rv = td[td.wrist == 'R'][feat].values
+            l = float(lv[0]) if len(lv) > 0 else 0
+            r = float(rv[0]) if len(rv) > 0 else 0
+            mean_val = (l + r) / 2
+            asym = abs(l - r) / mean_val if mean_val > 0 else 0
+            row.append(asym)
+        z_matrix.append(row)
+
+    z_arr = np.array(z_matrix)
+    feat_labels = [FEATURE_LABELS[f] for f in features]
+
+    # Also compute group means for context
+    # Color: higher asymmetry = more red (PD-like)
+    fig = go.Figure(data=go.Heatmap(
+        z=z_arr,
+        x=feat_labels,
+        y=task_labels,
+        colorscale='RdYlGn_r',  # Red=high asym, Green=low
+        zmin=0, zmax=1.0,
+        text=np.round(z_arr, 3).astype(str),
+        texttemplate='%{text}',
+        textfont=dict(size=10),
+        hovertemplate='Task: %{y}<br>Feature: %{x}<br>Asymmetry: %{z:.3f}<extra></extra>',
+        colorbar=dict(title='Asymmetry<br>Index', thickness=12),
+    ))
+
+    # Average asymmetry annotation
+    avg_asym = z_arr.mean()
+    fig.update_layout(
+        title=dict(
+            text=f'비대칭 지수 (Asymmetry Index) — 평균: {avg_asym:.3f}',
+            font=dict(size=14)),
+        xaxis=dict(tickfont=dict(size=11)),
+        yaxis=dict(tickfont=dict(size=10), autorange='reversed'),
+    )
+    return _apply_defaults(fig, height=max(350, len(tasks) * 30 + 100))
+
+
+def make_asym_waveform(tulip_id, task):
+    """Left vs Right waveform overlay for asymmetry visualization."""
+    from src.data_loader import load_timeseries, TASK_LABELS_KR
+
+    left_ts = load_timeseries(tulip_id, task, 'LeftWrist')
+    right_ts = load_timeseries(tulip_id, task, 'RightWrist')
+
+    if left_ts.empty and right_ts.empty:
+        return _empty_fig('센서 데이터 없음')
+
+    fig = go.Figure()
+    if not left_ts.empty:
+        fig.add_trace(go.Scatter(
+            x=left_ts['time'], y=left_ts['accel_mag'], mode='lines',
+            name='Left Wrist', line=dict(color='#4299e1', width=1.5), opacity=0.8,
+        ))
+    if not right_ts.empty:
+        fig.add_trace(go.Scatter(
+            x=right_ts['time'], y=right_ts['accel_mag'], mode='lines',
+            name='Right Wrist', line=dict(color='#fc8181', width=1.5), opacity=0.8,
+        ))
+
+    task_label = TASK_LABELS_KR.get(task, task)
+    fig.update_layout(
+        title=dict(text=f'좌/우 Waveform — {task_label}', font=dict(size=14)),
+        xaxis=dict(title='Time (s)', gridcolor='#edf2f7'),
+        yaxis=dict(title='Accel Magnitude (g)', gridcolor='#edf2f7'),
+        legend=dict(orientation='h', y=-0.12),
+    )
+    return _apply_defaults(fig, height=350)
+
+
+def make_asym_feature_bars(feature_df, tulip_id, task):
+    """L vs R bar chart for selected task's features."""
+    from src.data_loader import TASK_LABELS_KR
+    from src.feature_engineering import calc_asymmetry_index
+
+    subj = feature_df[(feature_df.tulip_id == tulip_id) & (feature_df.task == task)]
+    if subj.empty:
+        return _empty_fig('데이터 없음')
+
+    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
+    feat_labels = [FEATURE_LABELS[f] for f in features]
+
+    left_vals = []
+    right_vals = []
+    asym_vals = []
+    for feat in features:
+        lv = subj[subj.wrist == 'L'][feat].values
+        rv = subj[subj.wrist == 'R'][feat].values
+        l = float(lv[0]) if len(lv) > 0 else 0
+        r = float(rv[0]) if len(rv) > 0 else 0
+        left_vals.append(l)
+        right_vals.append(r)
+        asym_vals.append(calc_asymmetry_index(l, r))
+
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.65, 0.35],
+                        subplot_titles=['좌/우 Feature 값', '비대칭 지수'])
+
+    fig.add_trace(go.Bar(
+        x=feat_labels, y=left_vals, name='Left',
+        marker=dict(color='#4299e1'), opacity=0.8,
+    ), row=1, col=1)
+    fig.add_trace(go.Bar(
+        x=feat_labels, y=right_vals, name='Right',
+        marker=dict(color='#fc8181'), opacity=0.8,
+    ), row=1, col=1)
+
+    # Asymmetry index bars (colored by severity)
+    colors = ['#38a169' if a < 0.3 else '#dd6b20' if a < 0.6 else '#e53e3e' for a in asym_vals]
+    fig.add_trace(go.Bar(
+        x=feat_labels, y=asym_vals, name='Asymmetry',
+        marker=dict(color=colors),
+        text=[f'{a:.2f}' for a in asym_vals], textposition='auto',
+        showlegend=False,
+    ), row=1, col=2)
+
+    fig.add_hline(y=0.3, line_dash='dash', line_color='#dd6b20',
+                  annotation_text='Threshold', row=1, col=2)
+
+    task_label = TASK_LABELS_KR.get(task, task)
+    fig.update_layout(
+        title=dict(text=f'Feature 좌우 비교 — {task_label}', font=dict(size=14)),
+        barmode='group', legend=dict(orientation='h', y=-0.15),
+    )
+    return _apply_defaults(fig, height=380)
+
+
+def make_asym_group_compare(group_stats_df, tulip_id):
+    """Compare this patient's overall asymmetry vs PD/Healthy group averages."""
+    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
+    from src.feature_engineering import calc_asymmetry_index
+
+    df = group_stats_df.copy()
+    if df.empty:
+        return _empty_fig('데이터 없음')
+
+    # Calculate asymmetry per subject per task
+    asym_data = []
+    for tid in df['tulip_id'].unique():
+        for task in SENSOR_TASKS:
+            td = df[(df.tulip_id == tid) & (df.task == task)]
+            left = td[td.wrist == 'Left']['accel_rms'].values
+            right = td[td.wrist == 'Right']['accel_rms'].values
+            if len(left) > 0 and len(right) > 0:
+                asym = calc_asymmetry_index(left[0], right[0])
+                group = td.iloc[0]['group']
+                asym_data.append({'tulip_id': tid, 'task': task, 'group': group, 'asym': asym})
+
+    import pandas as pd
+    asym_df = pd.DataFrame(asym_data)
+    if asym_df.empty:
+        return _empty_fig('데이터 부족')
+
+    # Mean asymmetry per subject
+    subj_asym = asym_df.groupby(['tulip_id', 'group'])['asym'].mean().reset_index()
+
+    fig = go.Figure()
+
+    for group in ['Healthy', 'PD']:
+        gd = subj_asym[subj_asym.group == group]
+        if gd.empty:
+            continue
+        color = GROUP_COLORS_EXT[group]
+        fig.add_trace(go.Box(
+            y=gd['asym'].values, name=f'{group} (confirmed)',
+            marker=dict(color=color, size=6),
+            line=dict(color=color),
+            boxmean='sd', boxpoints='all', jitter=0.3,
+        ))
+
+    # This patient
+    pat_asym = subj_asym[subj_asym.tulip_id == tulip_id]
+    if not pat_asym.empty:
+        val = pat_asym['asym'].values[0]
+        fig.add_trace(go.Scatter(
+            x=['Healthy (confirmed)', 'PD (confirmed)'],
+            y=[val, val],
+            mode='markers+lines',
+            marker=dict(size=16, color='#805ad5', symbol='star',
+                        line=dict(width=2, color='white')),
+            line=dict(color='#805ad5', width=2, dash='dash'),
+            name=f'★ {tulip_id} (이 환자: {val:.3f})',
+        ))
+
+        # Which group is more asymmetric?
+        h_mean = subj_asym[subj_asym.group == 'Healthy']['asym'].mean()
+        p_mean = subj_asym[subj_asym.group == 'PD']['asym'].mean()
+        proximity = _calc_proximity_score(val, h_mean, p_mean)
+        closer = 'PD' if proximity > 50 else 'Healthy'
+        fig.add_annotation(
+            x=0.5, y=1.05, xref='paper', yref='paper',
+            text=f'비대칭도 → <b>{closer}</b>에 가까움 ({abs(proximity-50)*2:.0f}%)',
+            showarrow=False,
+            font=dict(size=13, color=GROUP_COLORS_EXT[closer]),
+        )
+
+    fig.update_layout(
+        title=dict(text='평균 비대칭 지수 — 그룹 비교', font=dict(size=14)),
+        yaxis=dict(title='Mean Asymmetry Index', gridcolor='#edf2f7'),
+        legend=dict(orientation='h', y=-0.15),
+    )
+    return _apply_defaults(fig, height=400)
+
+
+# ══════════════════════════════════════════════════════════════
+#  CLINICAL SUMMARY TAB
+# ══════════════════════════════════════════════════════════════
+
+def make_summary_radar(feature_df, group_stats_df, tulip_id):
+    """Radar chart: patient features normalized vs group ranges."""
+    from src.data_loader import SENSOR_TASKS
+    from src.feature_engineering import calc_asymmetry_index
+
+    if not tulip_id:
+        return _empty_fig('환자를 선택하세요')
+
+    group_map = group_stats_df[['tulip_id', 'group']].drop_duplicates()
+    merged = feature_df.merge(group_map, on='tulip_id', how='left')
+
+    # 5 dimensions for radar
+    dimensions = ['Tremor Power', 'Amplitude', 'Rhythm Irreg.', 'Mean Jerk', 'Asymmetry']
+    features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
+
+    # Normalize each feature: patient percentile within all subjects
+    patient_scores = []
+    healthy_scores = []
+    pd_scores = []
+
+    for feat in features:
+        all_vals = merged[feat].values
+        h_mean = merged[merged.group == 'Healthy'][feat].mean()
+        p_mean = merged[merged.group == 'PD'][feat].mean()
+        pat_val = merged[merged.tulip_id == tulip_id][feat].mean()
+
+        # Normalize to 0-1 based on data range
+        vmin, vmax = all_vals.min(), all_vals.max()
+        norm = lambda v: (v - vmin) / (vmax - vmin) if vmax > vmin else 0.5
+        patient_scores.append(norm(pat_val))
+        healthy_scores.append(norm(h_mean))
+        pd_scores.append(norm(p_mean))
+
+    # Asymmetry dimension
+    subj_data = feature_df[feature_df.tulip_id == tulip_id]
+    asym_vals = []
+    for task in SENSOR_TASKS:
+        td = subj_data[subj_data.task == task]
+        lv = td[td.wrist == 'L']['amplitude'].values
+        rv = td[td.wrist == 'R']['amplitude'].values
+        if len(lv) > 0 and len(rv) > 0:
+            asym_vals.append(calc_asymmetry_index(lv[0], rv[0]))
+    pat_asym = np.mean(asym_vals) if asym_vals else 0
+    patient_scores.append(min(pat_asym / 0.5, 1.0))  # normalize: 0.5+ = max
+    healthy_scores.append(0.2)  # typical healthy asymmetry
+    pd_scores.append(0.7)  # typical PD asymmetry
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatterpolar(
+        r=healthy_scores + [healthy_scores[0]],
+        theta=dimensions + [dimensions[0]],
+        fill='toself', fillcolor='rgba(56,161,105,0.1)',
+        line=dict(color='#38a169', width=2),
+        name='Healthy 평균',
+    ))
+    fig.add_trace(go.Scatterpolar(
+        r=pd_scores + [pd_scores[0]],
+        theta=dimensions + [dimensions[0]],
+        fill='toself', fillcolor='rgba(229,62,62,0.1)',
+        line=dict(color='#e53e3e', width=2),
+        name='PD 평균',
+    ))
+    fig.add_trace(go.Scatterpolar(
+        r=patient_scores + [patient_scores[0]],
+        theta=dimensions + [dimensions[0]],
+        fill='toself', fillcolor='rgba(128,90,213,0.15)',
+        line=dict(color='#805ad5', width=3),
+        marker=dict(size=8, symbol='star', color='#805ad5'),
+        name=f'★ {tulip_id}',
+    ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 1], gridcolor='#edf2f7'),
+        ),
+        title=dict(text=f'Feature Profile Radar — {tulip_id}', font=dict(size=14)),
+        legend=dict(orientation='h', y=-0.1),
+        height=420,
+        font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
+    )
+    return fig

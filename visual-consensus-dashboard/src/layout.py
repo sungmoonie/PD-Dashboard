@@ -54,11 +54,13 @@ def create_layout():
                             className='custom-tab', selected_className='custom-tab--selected'),
                     dcc.Tab(label='2. Group Comparison', value='tab-comparison',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='3. Sensor Analysis', value='tab-sensor',
+                    dcc.Tab(label='3. Bilateral Asymmetry', value='tab-asymmetry',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='4. UPDRS Clinical', value='tab-updrs',
+                    dcc.Tab(label='4. Sensor Analysis', value='tab-sensor',
                             className='custom-tab', selected_className='custom-tab--selected'),
                     dcc.Tab(label='5. Video Analysis', value='tab-video',
+                            className='custom-tab', selected_className='custom-tab--selected'),
+                    dcc.Tab(label='6. Clinical Summary', value='tab-summary',
                             className='custom-tab', selected_className='custom-tab--selected'),
                 ]),
                 html.Div(id='tab-content', className='tab-content-area'),
@@ -252,19 +254,62 @@ def build_tab_sensor():
     ])
 
 
-def build_tab_updrs():
-    """Tab 4: UPDRS Clinical Assessment."""
+def build_tab_asymmetry():
+    """Tab 3: Bilateral Asymmetry — PD core feature analysis."""
+    task_options = get_task_list()
     return html.Div([
         html.Div([
-            html.H3('UPDRS Part III — Clinician Consensus Heatmap', className='viz-title'),
-            html.P('Cell 클릭 → 하단에 3인 Clinician 비교 바 차트 표시',
+            html.H3('좌우 비대칭 분석 (Bilateral Asymmetry)', className='viz-title'),
+            html.P('PD의 핵심 특징: 편측성(laterality). '
+                   '좌우 손목 센서 차이가 클수록 PD 가능성 시사.',
                    className='tab-description'),
-            dcc.Graph(id='updrs-heatmap', config={'displayModeBar': False}),
-        ], className='viz-block'),
+        ]),
+        # Summary asymmetry index
         html.Div([
-            dcc.Graph(id='clinician-comparison-bar', config={'displayModeBar': False}),
-            html.Div(id='updrs-detail-text', className='detail-panel'),
+            dcc.Graph(id='asymmetry-heatmap', config={'displayModeBar': False}),
         ], className='viz-block'),
+        # Task selector for detail
+        html.Div([
+            html.Label('Task:', className='inline-label'),
+            dcc.Dropdown(id='asym-task-dropdown', options=task_options,
+                         value='TouchNose', clearable=False, className='inline-dropdown'),
+        ], className='controls-row'),
+        # L vs R waveform overlay
+        html.Div([
+            html.H3('좌/우 Waveform 비교', className='viz-title'),
+            dcc.Graph(id='asym-waveform', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        # L vs R feature bars
+        html.Div([
+            html.H3('좌/우 Feature 비교', className='viz-title'),
+            dcc.Graph(id='asym-feature-bars', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        # Group context: this patient's asymmetry vs confirmed groups
+        html.Div([
+            html.H3('비대칭 지수 — 그룹 비교', className='viz-title'),
+            dcc.Graph(id='asym-group-compare', config={'displayModeBar': False}),
+        ], className='viz-block'),
+    ])
+
+
+def build_tab_summary():
+    """Tab 6: Clinical Summary — all evidence compiled."""
+    return html.Div([
+        html.Div([
+            html.H3('Clinical Summary Report', className='viz-title'),
+            html.P('이 환자에 대한 모든 센서 분석 결과를 종합합니다.',
+                   className='tab-description'),
+        ]),
+        # Overall verdict
+        html.Div(id='summary-verdict', className='viz-block'),
+        # Key findings
+        html.Div(id='summary-findings', className='viz-block'),
+        # Feature radar
+        html.Div([
+            dcc.Graph(id='summary-radar', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        # Task-by-task breakdown table
+        html.Div(id='summary-task-table', className='viz-block'),
     ])
 
 
