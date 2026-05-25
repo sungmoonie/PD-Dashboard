@@ -265,7 +265,26 @@ def update_comparison_patient(tulip_id):
     return fig_gauge, fig_profile, fig_features
 
 
-# ─── Tab 2: Group Comparison (task-specific) ───
+# ─── Tab 3: Group Comparison — auto-select metric by task ───
+_TASK_RECOMMENDED_METRIC = {
+    'Relaxed': 'accel_rms', 'RelaxedTask': 'accel_rms',
+    'Entrainment': 'gyro_rms', 'TouchIndex': 'gyro_rms',
+    'TouchNose': 'accel_rms', 'DrinkGlas': 'accel_rms',
+    'PointFinger': 'accel_std', 'LiftHold': 'accel_rms',
+    'CrossArms': 'accel_rms', 'HoldWeight': 'accel_rms',
+    'StretchHold': 'accel_rms',
+}
+
+
+@app.callback(
+    Output('comp-metric-dropdown', 'value'),
+    Input('comp-task-dropdown', 'value'),
+)
+def auto_select_metric(task):
+    return _TASK_RECOMMENDED_METRIC.get(task, 'accel_rms')
+
+
+# ─── Tab 3: Group Comparison (task-specific) ───
 @app.callback(
     Output('new-vs-group-box', 'figure'),
     Output('asymmetry-scatter', 'figure'),
