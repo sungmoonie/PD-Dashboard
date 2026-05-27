@@ -228,6 +228,32 @@ def update_case_info(tulip_id, decision_store):
     return badge_text, badge_class, condition, hy, diag, nms_count, indicator
 
 
+# ─── Dropdown label update on decision-store change ───
+@app.callback(
+    Output('patient-dropdown', 'options'),
+    Input('decision-store', 'data'),
+)
+def update_dropdown_labels(decision_store):
+    """Update dropdown labels to reflect saved diagnoses."""
+    decision_store = decision_store or {}
+    options = []
+    for _, row in patients_df.iterrows():
+        tid = row['tulip_id']
+        num = tid.replace('TULIP_', '')
+        group = get_group_label(tid, row['condition'])
+        saved = decision_store.get(tid)
+        if group == 'New' and saved and saved.get('classification'):
+            cls = saved['classification']
+            label_txt = _CLASSIFICATION_LABELS.get(cls, (cls, ''))[0]
+            label = f"✓ Patient_{num} — Dx:{label_txt} ({row['age']}y, {row['gender']})"
+        elif group == 'New':
+            label = f"★ Patient_{num} — New ({row['age']}y, {row['gender']})"
+        else:
+            label = f"  Patient_{num} — {group} ({row['age']}y, {row['gender']})"
+        options.append({'label': label, 'value': tid})
+    return options
+
+
 # ─── Tab 1: Patient Overview ───
 @app.callback(
     Output('demographics-row', 'children'),
@@ -239,8 +265,9 @@ def update_case_info(tulip_id, decision_store):
     Output('nms-content', 'children'),
     Output('bilateral-matrix', 'figure'),
     Input('patient-dropdown', 'value'),
+    Input('decision-store', 'data'),
 )
-def update_overview(tulip_id):
+def update_overview(tulip_id, decision_store):
     empty = ('', '—', '—', '—', '—', '—', '', _empty_fig())
     if not tulip_id:
         return empty
@@ -251,13 +278,25 @@ def update_overview(tulip_id):
     r = row.iloc[0]
 
     is_new = tulip_id in NEW_CASES
-    cond_display = '★ New Case (미확정)' if is_new else r['condition']
+    decision_store = decision_store or {}
+    saved = decision_store.get(tulip_id)
+    has_decision = is_new and saved and saved.get('classification')
+
+    if has_decision:
+        cls = saved['classification']
+        label_txt = _CLASSIFICATION_LABELS.get(cls, (cls, ''))[0]
+        cond_display = f'Dx: {label_txt} (Confidence {saved.get("confidence", 0)}%)'
+    elif is_new:
+        cond_display = '★ New Case (미확정)'
+    else:
+        cond_display = r['condition']
 
     demographics = html.Div([
         html.Span(f"TULIP: {tulip_id}", className='demo-item demo-id'),
         html.Span(f"PADS: {r['pads_id']}", className='demo-item'),
         html.Span(f"Condition: {cond_display}",
-                  className='demo-item demo-condition' + (' demo-new' if is_new else '')),
+                  className='demo-item demo-condition' + (
+                      ' demo-dx' if has_decision else ' demo-new' if is_new else '')),
     ], className='demo-content')
 
     # NMS

@@ -291,6 +291,7 @@ body {
 .demo-id { font-weight: 700; color: #1a365d; }
 .demo-condition { font-weight: 700; }
 .demo-new { color: #805ad5; }
+.demo-dx { color: #2b6cb0; font-style: italic; }
 
 /* ===== NMS ===== */
 .nms-grid { max-height: 200px; overflow-y: auto; }
