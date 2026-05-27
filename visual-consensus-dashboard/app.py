@@ -13,15 +13,18 @@ from flask import send_file, request, Response, redirect
 # ─── Data Loading ───
 from src.data_loader import (
     load_patients, load_nms, load_updrs_labels, load_updrs_metadata,
-    load_video_analysis, build_group_stats, build_feature_cache,
+    build_group_stats, build_feature_cache,
     load_timeseries, get_subject_list_hybrid,
     SENSOR_TASKS, TASK_LABELS_KR, NEW_CASES, get_group_label, _estimate_fs,
+    load_video_feature_df, VIDEO_TASK_FOLDER_MAP, load_video_analysis,
 )
 from src.feature_engineering import (
     calc_signal_rms, calc_asymmetry_index, calc_signal_stats,
 )
 from src.figures import (
     make_timeseries_plot,
+    make_video_feature_timeline, make_video_lr_feature_comparison, summarize_video_task_metrics,
+    make_video_interval_distribution, make_video_tremor_spectrogram, make_video_symmetry_trend,
     make_motion_timeline, make_lr_tapping_comparison,
     make_bilateral_matrix, make_spectral_fingerprint,
     make_rhythm_ladder, make_evidence_ribbon,
@@ -45,6 +48,7 @@ patients_df = load_patients()
 nms_data = load_nms()
 labels_df = load_updrs_labels()
 updrs_meta = load_updrs_metadata()
+# [PRE] Legacy JSON video analysis preload kept for compatibility reference.
 video_data = load_video_analysis()
 group_stats = build_group_stats()
 feature_cache = build_feature_cache()
@@ -614,6 +618,13 @@ def update_video_type_options(tulip_id):
     Output('video-player-container', 'children'),
     Output('motion-timeline', 'figure'),
     Output('lr-tapping-comparison', 'figure'),
+    Output('video-interval-distribution', 'figure'),
+    Output('video-tremor-spectrogram', 'figure'),
+    Output('video-symmetry-trend', 'figure'),
+    Output('video-left-taps-label', 'children'),
+    Output('video-right-taps-label', 'children'),
+    Output('video-l-cv-label', 'children'),
+    Output('video-r-cv-label', 'children'),
     Output('video-left-taps', 'children'),
     Output('video-right-taps', 'children'),
     Output('video-l-cv', 'children'),
@@ -623,8 +634,16 @@ def update_video_type_options(tulip_id):
     Input('video-camera-dropdown', 'value'),
 )
 def update_video(tulip_id, video_type, camera):
+    if video_type == 'resting':
+        left_label, right_label = 'L Tremor Peaks', 'R Tremor Peaks'
+        lcv_label, rcv_label = 'L Peak Interval CV', 'R Peak Interval CV'
+    else:
+        left_label, right_label = 'L Taps', 'R Taps'
+        lcv_label, rcv_label = 'L Interval CV', 'R Interval CV'
+
     if not tulip_id or not video_type or not camera:
-        return (html.P('Select video'), _empty_fig(), _empty_fig(),
+        return (html.P('Select video'), _empty_fig(), _empty_fig(), _empty_fig(), _empty_fig(), _empty_fig(),
+                left_label, right_label, lcv_label, rcv_label,
                 '—', '—', '—', '—')
 
     # Build CDN URL
@@ -632,7 +651,9 @@ def update_video(tulip_id, video_type, camera):
     if not video_url:
         return (html.P('이 환자의 영상이 아직 업로드되지 않았습니다.',
                         style={'color': '#718096', 'padding': '20px'}),
-                _empty_fig(), _empty_fig(), '—', '—', '—', '—')
+                _empty_fig(), _empty_fig(), _empty_fig(), _empty_fig(), _empty_fig(),
+                left_label, right_label, lcv_label, rcv_label,
+                '—', '—', '—', '—')
 
     player = html.Div([
         html.Video(
@@ -644,25 +665,57 @@ def update_video(tulip_id, video_type, camera):
                       'display': 'inline-block', 'fontWeight': '600'}),
     ])
 
-    # Analysis (existing video_data is for finger tapping — show if available)
-    side = 'left' if 'left' in video_type else 'right'
-    side_data = video_data.get(side, {})
-    cam_data = side_data.get(camera, {})
+    # Task-aware analysis from videos_feature CSV (minimal layout change)
+    task_folder = VIDEO_TASK_FOLDER_MAP.get(video_type)
+    primary_df = load_video_feature_df(tulip_id, task_folder, camera) if task_folder else None
 
-    fig_timeline = make_motion_timeline(cam_data, side) if cam_data else _empty_fig()
-    fig_lr = make_lr_tapping_comparison(
-        video_data.get('left', {}).get(camera, {}),
-        video_data.get('right', {}).get(camera, {}),
+    counterpart_df = None  # kept for signature compatibility
+
+    if primary_df is None or primary_df.empty:
+        # [PRE] Legacy fallback block (video_analysis.json) is intentionally kept.
+        # [PRE] We keep this code path as comment only to satisfy no-deletion policy.
+        # side = 'L' if video_type == 'toe_left' else 'R'
+        # legacy = video_data.get(tulip_id, {}).get(side)
+        # if legacy:
+        #     legacy_player = html.P(
+        #         'videos_feature CSV가 없어서 legacy JSON 분석 결과를 표시합니다.',
+        #         style={'color': '#718096', 'padding': '12px'},
+        #     )
+        #     legacy_timeline = make_motion_timeline(video_data[tulip_id], side)
+        #     legacy_lr = make_lr_tapping_comparison(
+        #         video_data[tulip_id].get('L', {}),
+        #         video_data[tulip_id].get('R', {}),
+        #     )
+        #     return legacy_player, legacy_timeline, legacy_lr, '—', '—', '—', '—'
+        # [END PRE]
+        msg = html.P(
+            '선택한 task/camera에 대한 videos_feature CSV가 없습니다. '
+            'extract_metrabs_joint_features.py 배치를 먼저 실행해주세요.',
+            style={'color': '#718096', 'padding': '20px'},
+        )
+        return (
+            msg,
+            _empty_fig('feature 데이터 없음'),
+            _empty_fig('feature 데이터 없음'),
+            _empty_fig('feature 데이터 없음'),
+            _empty_fig('feature 데이터 없음'),
+            _empty_fig('feature 데이터 없음'),
+            left_label, right_label, lcv_label, rcv_label,
+            '—', '—', '—', '—',
+        )
+
+    fig_timeline = make_video_feature_timeline(primary_df, video_type, camera)
+    fig_lr = make_video_lr_feature_comparison(primary_df, counterpart_df, video_type)
+    fig_intervals = make_video_interval_distribution(primary_df, video_type)
+    fig_spec = make_video_tremor_spectrogram(primary_df, video_type)
+    fig_symmetry = make_video_symmetry_trend(primary_df, video_type)
+    l_taps, r_taps, l_cv, r_cv = summarize_video_task_metrics(primary_df, counterpart_df, video_type)
+
+    return (
+        player, fig_timeline, fig_lr, fig_intervals, fig_spec, fig_symmetry,
+        left_label, right_label, lcv_label, rcv_label,
+        l_taps, r_taps, l_cv, r_cv,
     )
-
-    left_cam = video_data.get('left', {}).get(camera, {})
-    right_cam = video_data.get('right', {}).get(camera, {})
-    l_taps = str(left_cam.get('estimated_taps', '—')) if left_cam else '—'
-    r_taps = str(right_cam.get('estimated_taps', '—')) if right_cam else '—'
-    l_cv = f"{left_cam.get('tap_interval_cv', 0):.3f}" if left_cam else '—'
-    r_cv = f"{right_cam.get('tap_interval_cv', 0):.3f}" if right_cam else '—'
-
-    return player, fig_timeline, fig_lr, l_taps, r_taps, l_cv, r_cv
 
 
 # ─── Decision Save / Reset ───
@@ -725,4 +778,5 @@ def export_json(n_clicks, store):
 # ══════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8050)
+    # Keep debug on, but disable hot-reload watcher to avoid missing legacy asset path errors.
+    app.run(debug=True, dev_tools_hot_reload=False, port=8050)
