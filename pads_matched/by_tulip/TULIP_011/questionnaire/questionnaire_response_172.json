@@ -1,6 +1,6 @@
 {
   "resource_type": "questionnaire_response",
-  "subject_id": "442",
+  "subject_id": "172",
   "study_id": "PADS",
   "id": "Non-motor Symptoms",
   "questionnaire_name": "NMS",
@@ -8,7 +8,7 @@
     {
       "link_id": "01",
       "text": "Dribbling of saliva during the daytime",
-      "answer": false
+      "answer": true
     },
     {
       "link_id": "02",
@@ -18,17 +18,17 @@
     {
       "link_id": "03",
       "text": "Difficulty swallowing food or drink or problems with choking",
-      "answer": false
+      "answer": true
     },
     {
       "link_id": "04",
       "text": "Vomiting or feelings of sickness (nausea)",
-      "answer": false
+      "answer": true
     },
     {
       "link_id": "05",
       "text": "Constipation (less than 3 bowel movements a week) or having to strain to pass a stool (faeces)",
-      "answer": true
+      "answer": false
     },
     {
       "link_id": "06",
@@ -38,7 +38,7 @@
     {
       "link_id": "07",
       "text": "Feeling that your bowel emptying is incomplete after having been to the toilet",
-      "answer": true
+      "answer": false
     },
     {
       "link_id": "08",
@@ -53,12 +53,12 @@
     {
       "link_id": "10",
       "text": "Unexplained pains (not due to known conditions such as arthritis)",
-      "answer": false
+      "answer": true
     },
     {
       "link_id": "11",
       "text": "Unexplained change in weight (not due to change in diet)",
-      "answer": true
+      "answer": false
     },
     {
       "link_id": "12",
@@ -78,12 +78,12 @@
     {
       "link_id": "15",
       "text": "Difficulty concentrating or staying focussed",
-      "answer": false
+      "answer": true
     },
     {
       "link_id": "16",
       "text": "Feeling sad, low or blue",
-      "answer": true
+      "answer": false
     },
     {
       "link_id": "17",
@@ -103,7 +103,7 @@
     {
       "link_id": "20",
       "text": "Feeling light headed, dizzy or weak standing from sitting or lying",
-      "answer": true
+      "answer": false
     },
     {
       "link_id": "21",
@@ -123,22 +123,22 @@
     {
       "link_id": "24",
       "text": "Intense, vivid dreams or frightening dreams",
-      "answer": true
+      "answer": false
     },
     {
       "link_id": "25",
       "text": "Talking or moving about in your sleep as if you are acting out a dream",
-      "answer": false
+      "answer": true
     },
     {
       "link_id": "26",
       "text": "Unpleasant sensations in your legs at night or while resting, and a feeling that you need to move",
-      "answer": true
+      "answer": false
     },
     {
       "link_id": "27",
       "text": "Swelling of your legs",
-      "answer": false
+      "answer": true
     },
     {
       "link_id": "28",
