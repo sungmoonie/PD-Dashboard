@@ -9,7 +9,8 @@ import json
 import os
 import numpy as np
 
-VIDEO_DIR = '/Users/moonie/Desktop/시각화수업'
+# VIDEO_DIR = "/Users/moonie/Desktop/시각화수업" # [FIX]
+VIDEO_DIR = os.getenv('VIDEO_DIR_BASE')
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), 'data')
 
 VIDEOS = [
