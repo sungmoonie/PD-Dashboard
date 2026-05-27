@@ -126,8 +126,12 @@ def create_layout():
                         placeholder='Clinical reasoning...',
                         className='decision-textarea',
                     ),
-                    html.Button('Save Decision', id='save-decision-btn',
-                                className='btn-primary', n_clicks=0),
+                    html.Div([
+                        html.Button('Save Decision', id='save-decision-btn',
+                                    className='btn-primary', n_clicks=0),
+                        html.Button('Reset Diagnosis', id='reset-decision-btn',
+                                    className='btn-reset', n_clicks=0),
+                    ], className='decision-btn-row'),
                     html.Div(id='save-feedback', className='save-feedback'),
                 ], id='decision-form-container', className='decision-form'),
 

@@ -691,7 +691,7 @@ def make_motor_landscape(tulip_id, task):
         rows=5, cols=1,
         row_heights=[0.25, 0.2, 0.2, 0.2, 0.15],
         shared_xaxes=True,
-        vertical_spacing=0.03,
+        vertical_spacing=0.05,
         subplot_titles=[
             'Clinical Saliency Skyline — Movement Abnormality Intensity',
             'Tremor Persistence (4-12 Hz power + frequency stability)',
@@ -740,14 +740,16 @@ def make_motor_landscape(tulip_id, task):
     fig.add_hline(y=0.7, line_dash='dot', line_color='#e53e3e', line_width=1, row=1, col=1)
     fig.add_hline(y=0.4, line_dash='dot', line_color='#dd6b20', line_width=1, row=1, col=1)
 
-    # Clinical event annotations on saliency
-    for t, label, color in events:
+    # Clinical event annotations on saliency — stagger vertically to avoid overlap
+    for idx, (t, label, color) in enumerate(events):
+        # Alternate between 2 vertical levels to prevent text collision
+        y_offset = -28 - (idx % 3) * 22
         fig.add_annotation(
             x=t, y=1.02, xref='x', yref='y domain',
-            text=label, showarrow=True, arrowhead=2, arrowsize=0.8,
-            arrowcolor=color, font=dict(size=9, color=color),
-            bgcolor='rgba(255,255,255,0.85)', bordercolor=color,
-            borderwidth=1, borderpad=2, ax=0, ay=-25,
+            text=f'<b>{label}</b>', showarrow=True, arrowhead=2, arrowsize=0.8,
+            arrowcolor=color, font=dict(size=8, color=color),
+            bgcolor='rgba(255,255,255,0.9)', bordercolor=color,
+            borderwidth=1, borderpad=3, ax=0, ay=y_offset,
             row=1, col=1,
         )
 
@@ -865,10 +867,10 @@ def make_motor_landscape(tulip_id, task):
             text=f'Clinical Motor Event Landscape — {task_label}',
             font=dict(size=15),
         ),
-        height=750,
+        height=800,
         plot_bgcolor='white', paper_bgcolor='white',
         font=dict(family='-apple-system, Segoe UI, sans-serif', size=11, color='#2c3e50'),
-        margin=dict(l=55, r=20, t=65, b=40),
+        margin=dict(l=60, r=20, t=100, b=45),
     )
     fig.update_xaxes(title_text='Time (s)', row=5, col=1)
     fig.update_yaxes(title_text='Saliency', row=1, col=1)
@@ -1441,7 +1443,7 @@ def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
     ))
 
     # Per-task breakdown
-    task_display = {'Entrainment': 'Entrainment\n(rhythm/bradykinesia)', 'Relaxed': 'Relaxed\n(rest tremor)'}
+    task_display = {'Entrainment': 'Entrainment (rhythm/bradykinesia)', 'Relaxed': 'Relaxed (rest tremor)'}
     for task in MATCHING_TASKS:
         task_feats = per_task.get(task, {})
         task_score = np.mean(list(task_feats.values())) if task_feats else 50
@@ -1466,12 +1468,6 @@ def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
     # Zone labels and lines
     fig.add_vline(x=35, line_dash='dot', line_color='#a0aec0', line_width=1)
     fig.add_vline(x=65, line_dash='dot', line_color='#a0aec0', line_width=1)
-    fig.add_annotation(x=17, y=-0.3, text='Healthy-like', showarrow=False,
-                       font=dict(size=9, color='#38a169'), yref='paper')
-    fig.add_annotation(x=50, y=-0.3, text='Ambiguous', showarrow=False,
-                       font=dict(size=9, color='#805ad5'), yref='paper')
-    fig.add_annotation(x=83, y=-0.3, text='PD-like', showarrow=False,
-                       font=dict(size=9, color='#e53e3e'), yref='paper')
 
     fig.update_layout(
         title=dict(
@@ -1481,14 +1477,27 @@ def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
                   f'16D weighted Euclidean | d_PD={d_pd:.2f}, d_H={d_healthy:.2f}</span>'),
             font=dict(size=13),
         ),
-        xaxis=dict(title='← Healthy-like (0%) ─── Ambiguous ─── PD-like (100%) →',
-                   range=[0, 100], gridcolor='#edf2f7', dtick=25),
+        xaxis=dict(
+            range=[0, 100], gridcolor='#edf2f7', dtick=25,
+            title=None,
+        ),
         yaxis=dict(autorange='reversed'),
-        height=280,
+        height=300,
         plot_bgcolor='white', paper_bgcolor='white',
         font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
-        margin=dict(l=130, r=20, t=75, b=50),
+        margin=dict(l=200, r=30, t=75, b=55),
     )
+    # Zone labels below bars — use xref='x', yref='paper' for stable positioning
+    for x_pos, label, color in [
+        (17.5, 'Healthy-like', '#38a169'),
+        (50, 'Ambiguous', '#805ad5'),
+        (82.5, 'PD-like', '#e53e3e'),
+    ]:
+        fig.add_annotation(
+            x=x_pos, y=-0.08, xref='x', yref='paper',
+            text=f'<b>{label}</b>', showarrow=False,
+            font=dict(size=10, color=color),
+        )
     return fig
 
 
@@ -1755,9 +1764,10 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
         title=dict(text='Movement Profile — Reference Comparison', font=dict(size=13)),
         xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
         yaxis=dict(title='Accel RMS (g)', gridcolor='#edf2f7'),
-        legend=dict(orientation='h', y=-0.2, font=dict(size=11)),
+        legend=dict(orientation='h', y=-0.25, font=dict(size=11)),
+        margin=dict(b=80),
     )
-    return _apply_defaults(fig, height=450)
+    return _apply_defaults(fig, height=480)
 
 
 def make_asymmetry_scatter(group_stats_df, task, highlight_tulip=None):

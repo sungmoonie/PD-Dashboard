@@ -129,6 +129,13 @@ def render_tab(tab):
 
 
 # ─── Case Badge + Right Panel Info ───
+_CLASSIFICATION_LABELS = {
+    'PD': ('PD', 'badge badge-pd'),
+    'HT': ('Healthy Tremor', 'badge badge-healthy'),
+    '?': ('Uncertain', 'badge badge-other'),
+}
+
+
 @app.callback(
     Output('case-badge', 'children'),
     Output('case-badge', 'className'),
@@ -138,17 +145,27 @@ def render_tab(tab):
     Output('info-nms', 'children'),
     Output('new-patient-indicator', 'children'),
     Input('patient-dropdown', 'value'),
+    Input('decision-store', 'data'),
 )
-def update_case_info(tulip_id):
+def update_case_info(tulip_id, decision_store):
     if not tulip_id:
         return '—', 'badge badge-unknown', '—', '—', '—', '—', ''
 
     row = patients_df[patients_df.tulip_id == tulip_id]
     meta = updrs_meta.get(tulip_id, {})
     is_new = tulip_id in NEW_CASES
+    decision_store = decision_store or {}
+    saved = decision_store.get(tulip_id)
+
+    # Check if doctor already saved a decision for this new patient
+    has_decision = is_new and saved and saved.get('classification')
 
     # Badge
-    if is_new:
+    if has_decision:
+        cls = saved['classification']
+        badge_text, badge_class = _CLASSIFICATION_LABELS.get(cls, (cls, 'badge badge-other'))
+        badge_text = f'Dx: {badge_text}'
+    elif is_new:
         badge_text = '★ NEW'
         badge_class = 'badge badge-new'
     else:
@@ -159,19 +176,49 @@ def update_case_info(tulip_id):
 
     # Info cards
     condition = row.iloc[0]['condition'] if not row.empty else '—'
-    if is_new:
-        condition = '미확정 (New Case)'
+    if has_decision:
+        cls = saved['classification']
+        label, _ = _CLASSIFICATION_LABELS.get(cls, (cls, ''))
+        conf = saved.get('confidence', 0)
+        condition = html.Div([
+            html.Div(label, className='card-value-main', style={'color': '#2b6cb0'}),
+            html.Div(f'(Confidence {conf}%)', className='card-value-sub'),
+        ])
+    elif is_new:
+        condition = html.Div([
+            html.Div('미확정', className='card-value-main'),
+            html.Div('(New Case)', className='card-value-sub'),
+        ])
 
     hy = str(meta.get('hy_mean', '—'))
     diag = meta.get('diagnosis', '—')
-    if is_new:
-        diag = '판단 필요'
+    if has_decision:
+        cls = saved['classification']
+        label, _ = _CLASSIFICATION_LABELS.get(cls, (cls, ''))
+        diag = html.Div([
+            html.Div(f'Clinician: {label}', className='card-value-main',
+                     style={'color': '#2b6cb0', 'fontSize': '13px'}),
+        ])
+    elif is_new:
+        diag = html.Div([
+            html.Div('판단 필요', className='card-value-main'),
+        ])
 
     nms_count = str(nms_data.get(tulip_id, {}).get('count', '—'))
 
     # New patient indicator
     indicator = ''
-    if is_new:
+    if has_decision:
+        cls = saved['classification']
+        label, _ = _CLASSIFICATION_LABELS.get(cls, (cls, ''))
+        tags = ', '.join(saved.get('evidence_tags', [])) or '없음'
+        indicator = html.Div([
+            html.Span('✓ ', style={'fontSize': '16px'}),
+            html.Span(f'진단 저장됨: {label} (Confidence {saved.get("confidence", 0)}%)'),
+            html.Br(),
+            html.Span(f'Evidence: {tags}', style={'fontSize': '11px', 'color': '#718096'}),
+        ], className='new-case-alert', style={'background': '#f0fff4', 'borderColor': '#9ae6b4', 'color': '#276749'})
+    elif is_new:
         indicator = html.Div([
             html.Span('★ ', className='new-star'),
             html.Span('이 환자는 미확정 New Case입니다. '),
@@ -542,11 +589,12 @@ def update_video(side, camera):
     return player, fig_timeline, fig_lr, l_taps, r_taps, l_cv, r_cv
 
 
-# ─── Decision Save ───
+# ─── Decision Save / Reset ───
 @app.callback(
     Output('decision-store', 'data'),
     Output('save-feedback', 'children'),
     Input('save-decision-btn', 'n_clicks'),
+    Input('reset-decision-btn', 'n_clicks'),
     State('patient-dropdown', 'value'),
     State('decision-classification', 'value'),
     State('decision-confidence', 'value'),
@@ -554,18 +602,30 @@ def update_video(side, camera):
     State('decision-notes', 'value'),
     State('decision-store', 'data'),
 )
-def save_decision(n_clicks, tulip_id, classification, confidence, tags, notes, store):
-    if not n_clicks or not tulip_id:
-        return store or {}, ''
-
+def save_or_reset_decision(save_clicks, reset_clicks, tulip_id,
+                           classification, confidence, tags, notes, store):
     store = store or {}
-    store[tulip_id] = {
-        'classification': classification,
-        'confidence': confidence,
-        'evidence_tags': tags,
-        'notes': notes,
-    }
-    return store, html.Span('✓ Saved!', className='feedback-success')
+    if not tulip_id:
+        return store, ''
+
+    triggered = callback_context.triggered_id
+    if triggered == 'reset-decision-btn' and reset_clicks:
+        store.pop(tulip_id, None)
+        return store, html.Span('↩ 진단 초기화됨', className='feedback-reset')
+
+    if triggered == 'save-decision-btn' and save_clicks:
+        if not classification:
+            return store, html.Span('분류를 선택해주세요', className='feedback-warn')
+        store[tulip_id] = {
+            'classification': classification,
+            'confidence': confidence,
+            'evidence_tags': tags or [],
+            'notes': notes or '',
+        }
+        label = _CLASSIFICATION_LABELS.get(classification, (classification, ''))[0]
+        return store, html.Span(f'✓ Saved: {label} ({confidence}%)', className='feedback-success')
+
+    return store, ''
 
 
 # ─── Export JSON ───
