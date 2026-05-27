@@ -6,10 +6,13 @@ from src.data_loader import (
 )
 
 
-def _card(card_id, label, initial='—'):
+def _card(card_id, label, initial='—', label_id=None):
     """Create a summary metric card."""
+    label_props = {'className': 'card-label'}
+    if label_id is not None:
+        label_props['id'] = label_id
     return html.Div([
-        html.Div(label, className='card-label'),
+        html.Div(label, **label_props),
         html.Div(initial, id=card_id, className='card-value'),
     ], className='summary-card')
 
@@ -344,6 +347,12 @@ def build_tab_landscape():
 def build_tab_video():
     """Tab 6: Video Analysis — patient-specific videos from R2 CDN."""
     return html.Div([
+        html.P(
+            '* 각주: Tab 6 영상은 Cloudflare R2 CDN 링크를 사용합니다. '
+            '로컬 파일이 없으면 개발 환경에서 재생 확인이 제한될 수 있습니다.',
+            className='tab-description',
+            style={'marginBottom': '8px'},
+        ),
         # Controls
         html.Div([
             html.Div([
@@ -370,10 +379,10 @@ def build_tab_video():
             html.Div([
                 html.Div(id='video-player-container', className='video-container'),
                 html.Div([
-                    _card('video-left-taps', 'L Taps'),
-                    _card('video-right-taps', 'R Taps'),
-                    _card('video-l-cv', 'L Interval CV'),
-                    _card('video-r-cv', 'R Interval CV'),
+                    _card('video-left-taps', 'L Taps', label_id='video-left-taps-label'),
+                    _card('video-right-taps', 'R Taps', label_id='video-right-taps-label'),
+                    _card('video-l-cv', 'L Interval CV', label_id='video-l-cv-label'),
+                    _card('video-r-cv', 'R Interval CV', label_id='video-r-cv-label'),
                 ], className='video-cards-grid'),
             ], className='video-left'),
             html.Div([
@@ -381,4 +390,10 @@ def build_tab_video():
                 dcc.Graph(id='lr-tapping-comparison', config={'displayModeBar': False}),
             ], className='video-right'),
         ], className='video-split-layout'),
+        # Clinical-focused extra visualizations (keeps existing charts intact)
+        html.Div([
+            dcc.Graph(id='video-interval-distribution', config={'displayModeBar': False}),
+            dcc.Graph(id='video-tremor-spectrogram', config={'displayModeBar': False}),
+            dcc.Graph(id='video-symmetry-trend', config={'displayModeBar': False}),
+        ], className='video-right'),
     ])
