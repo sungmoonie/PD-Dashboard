@@ -20,7 +20,7 @@ _SUBJECT_TULIP = {
 }
 
 # New (unlabeled) cases — these are treated as "new patients" for review
-NEW_CASES = {'TULIP_001', 'TULIP_008'}
+NEW_CASES = {'TULIP_011', 'TULIP_014'}
 
 
 def get_group_label(tulip_id, condition):
