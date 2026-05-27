@@ -54,9 +54,11 @@ resolve_base_dir() {
 
 BASE_DIR="$(resolve_base_dir "${BASE_DIR_RAW}")"
 mkdir -p "${BASE_DIR}"
+FORCE_DOWNLOAD="${FORCE_DOWNLOAD:-0}"
 
 echo "[INFO] config: ${CONFIG_PATH}"
 echo "[INFO] base_dir: ${BASE_DIR}"
+echo "[INFO] force_download: ${FORCE_DOWNLOAD}"
 
 # Emit TSV rows: subject \t task \t url
 python3 - <<'PY' "${CONFIG_PATH}" | while IFS=$'\t' read -r subject task url; do
@@ -69,9 +71,25 @@ for subject, tasks in cfg["tulip_video_folder_link"].items():
 PY
   target_dir="${BASE_DIR}/${subject}/videos/${task}"
   mkdir -p "${target_dir}"
+
+  if [[ "${FORCE_DOWNLOAD}" != "1" ]]; then
+    shopt -s nullglob
+    existing_mp4=("${target_dir}"/Camera*.mp4)
+    shopt -u nullglob
+    if (( ${#existing_mp4[@]} >= 6 )); then
+      echo "[SKIP] ${subject} / ${task} (already has ${#existing_mp4[@]} mp4 files)"
+      continue
+    fi
+  fi
+
   echo "[DOWNLOAD] ${subject} / ${task}"
   echo "           -> ${target_dir}"
-  gdown --folder "${url}" -O "${target_dir}"
+  if ! gdown --folder "${url}" -O "${target_dir}"; then
+    echo "[WARN] download failed: ${subject} / ${task}"
+    echo "       url=${url}"
+    echo "       continue to next task..."
+    continue
+  fi
 done
 
 echo "[DONE] All configured TULIP folders downloaded."
