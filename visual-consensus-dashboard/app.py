@@ -621,19 +621,15 @@ def update_video(tulip_id, video_type, camera):
                         style={'color': '#718096', 'padding': '20px'}),
                 _empty_fig(), _empty_fig(), '—', '—', '—', '—')
 
-    # Use Iframe with inline video HTML for reliable cross-origin playback
-    video_html = (
-        f'<video controls playsinline preload="metadata" crossorigin="anonymous" '
-        f'style="width:100%;border-radius:8px;background:#1a202c;">'
-        f'<source src="{video_url}" type="video/mp4">'
-        f'Your browser does not support video.'
-        f'</video>'
-    )
-    player = html.Iframe(
-        srcDoc=video_html,
-        style={'width': '100%', 'height': '360px', 'border': 'none',
-               'borderRadius': '8px', 'overflow': 'hidden'},
-    )
+    player = html.Div([
+        html.Video(
+            src=video_url, controls=True, autoPlay=False,
+            style={'width': '100%', 'borderRadius': '8px', 'background': '#1a202c'},
+        ),
+        html.A('영상이 안 보이면 클릭 (직접 재생)', href=video_url, target='_blank',
+               style={'fontSize': '11px', 'color': '#805ad5', 'marginTop': '4px',
+                      'display': 'block'}),
+    ])
 
     # Analysis (existing video_data is for finger tapping — show if available)
     side = 'left' if 'left' in video_type else 'right'
