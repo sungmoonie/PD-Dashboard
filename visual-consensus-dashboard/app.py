@@ -64,25 +64,35 @@ app.layout = create_layout()
 #  VIDEO STREAMING
 # ══════════════════════════════════════════════════════════════
 
+GITHUB_REPO = 'sungmoonie/PD-Dashboard'
+GITHUB_BRANCH = 'main'
+
 VIDEO_FOLDERS = {
     'left': '7. Finger_tapping_left',
     'right': '8. FInger_tapping_right',
 }
 
 
+def _github_video_url(side, camera):
+    """Build GitHub raw URL for a video file."""
+    folder = VIDEO_FOLDERS.get(side, VIDEO_FOLDERS['left'])
+    # URL-encode the space in folder name
+    folder_encoded = folder.replace(' ', '%20')
+    return (f'https://raw.githubusercontent.com/{GITHUB_REPO}/'
+            f'{GITHUB_BRANCH}/{folder_encoded}/{camera}')
+
+
 @server.route('/video/<folder>/<camera>')
 def serve_video(folder, camera):
-    """Serve video with Range request support."""
+    """Serve video locally if available, otherwise redirect to GitHub CDN."""
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if folder == 'left':
-        video_dir = os.path.join(project_dir, VIDEO_FOLDERS['left'])
-    else:
-        video_dir = os.path.join(project_dir, VIDEO_FOLDERS['right'])
-
+    side = 'left' if folder == 'left' else 'right'
+    video_dir = os.path.join(project_dir, VIDEO_FOLDERS[side])
     video_path = os.path.join(video_dir, camera)
+
+    # If local file not found (Vercel deployment), redirect to GitHub
     if not os.path.exists(video_path):
-        github_base = 'https://raw.githubusercontent.com'
-        return redirect(f'{github_base}/placeholder/video/{folder}/{camera}', code=302)
+        return redirect(_github_video_url(side, camera), code=302)
 
     file_size = os.path.getsize(video_path)
     range_header = request.headers.get('Range')
