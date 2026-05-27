@@ -621,9 +621,18 @@ def update_video(tulip_id, video_type, camera):
                         style={'color': '#718096', 'padding': '20px'}),
                 _empty_fig(), _empty_fig(), '—', '—', '—', '—')
 
-    player = html.Video(
-        src=video_url, controls=True, className='video-player',
-        style={'width': '100%', 'borderRadius': '8px'},
+    # Use Iframe with inline video HTML for reliable cross-origin playback
+    video_html = (
+        f'<video controls playsinline preload="metadata" crossorigin="anonymous" '
+        f'style="width:100%;border-radius:8px;background:#1a202c;">'
+        f'<source src="{video_url}" type="video/mp4">'
+        f'Your browser does not support video.'
+        f'</video>'
+    )
+    player = html.Iframe(
+        srcDoc=video_html,
+        style={'width': '100%', 'height': '360px', 'border': 'none',
+               'borderRadius': '8px', 'overflow': 'hidden'},
     )
 
     # Analysis (existing video_data is for finger tapping — show if available)
