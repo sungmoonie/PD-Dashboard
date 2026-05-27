@@ -72,6 +72,7 @@ R2_VIDEO_CATALOG = {
     'TULIP_001': {
         'toe_left': 'TULIP_001_17. Toe_tapping_left',
         'toe_right': 'TULIP_001_18. Toe_tapping_right',
+        'resting': 'TULIP_001_26. Resting & hand tremor',
     },
     'TULIP_008': {
         'toe_left': 'TULIP_008_17. Toe_tapping_left',
