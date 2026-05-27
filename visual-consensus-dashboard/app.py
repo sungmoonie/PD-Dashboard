@@ -125,6 +125,18 @@ def render_tab(tab):
     return html.Div('Select a tab')
 
 
+# ─── Hide right panel on Video tab ───
+@app.callback(
+    Output('right-panel', 'style'),
+    Output('dashboard-grid', 'style'),
+    Input('main-tabs', 'value'),
+)
+def toggle_right_panel(tab):
+    if tab == 'tab-video':
+        return {'display': 'none'}, {'gridTemplateColumns': '1fr'}
+    return {}, {}
+
+
 # ─── Case Badge + Right Panel Info ───
 _CLASSIFICATION_LABELS = {
     'PD': ('PD', 'badge badge-pd'),

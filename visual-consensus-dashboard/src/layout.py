@@ -69,7 +69,7 @@ def create_layout():
             ], className='main-content'),
 
             # ═══ RIGHT: Decision Workspace (for new patients) ═══
-            html.Aside([
+            html.Aside(id='right-panel', children=[
                 html.H3('Decision Workspace', className='panel-title'),
                 html.Div(id='new-patient-indicator', className='new-indicator'),
 
@@ -142,7 +142,7 @@ def create_layout():
                     dcc.Download(id='download-json'),
                 ], className='export-section'),
             ], className='right-panel'),
-        ], className='dashboard-grid'),
+        ], id='dashboard-grid', className='dashboard-grid'),
     ], className='app-container')
 
 
