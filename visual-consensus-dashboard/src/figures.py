@@ -686,19 +686,12 @@ def make_motor_landscape(tulip_id, task):
                                         rhythm_n[:ml_all], amp_n[:ml_all],
                                         asym_n[:ml_all], saliency)
 
-    # Build figure
+    # Build figure — no subplot_titles (we place titles manually at bottom)
     fig = make_subplots(
         rows=5, cols=1,
         row_heights=[0.25, 0.2, 0.2, 0.2, 0.15],
         shared_xaxes=True,
-        vertical_spacing=0.05,
-        subplot_titles=[
-            'Clinical Saliency Skyline — Movement Abnormality Intensity',
-            'Tremor Persistence (4-12 Hz power + frequency stability)',
-            'Timing Instability (rhythm irregularity)',
-            'Movement Amplitude (progressive decay detection)',
-            f'Amplitude Asymmetry (|L-R|/mean, dominant: {dominant_side})',
-        ],
+        vertical_spacing=0.06,
     )
 
     # ── Row 1: Saliency with decomposition hover ──
@@ -740,18 +733,28 @@ def make_motor_landscape(tulip_id, task):
     fig.add_hline(y=0.7, line_dash='dot', line_color='#e53e3e', line_width=1, row=1, col=1)
     fig.add_hline(y=0.4, line_dash='dot', line_color='#dd6b20', line_width=1, row=1, col=1)
 
-    # Clinical event annotations on saliency — stagger vertically to avoid overlap
-    for idx, (t, label, color) in enumerate(events):
-        # Alternate between 2 vertical levels to prevent text collision
-        y_offset = -28 - (idx % 3) * 22
-        fig.add_annotation(
-            x=t, y=1.02, xref='x', yref='y domain',
-            text=f'<b>{label}</b>', showarrow=True, arrowhead=2, arrowsize=0.8,
-            arrowcolor=color, font=dict(size=8, color=color),
-            bgcolor='rgba(255,255,255,0.9)', bordercolor=color,
-            borderwidth=1, borderpad=3, ax=0, ay=y_offset,
-            row=1, col=1,
-        )
+    # Clinical event annotations — smart collision avoidance
+    # Sort events by time, then stagger only when events are close together
+    if events:
+        sorted_events = sorted(events, key=lambda e: e[0])
+        prev_t = -999
+        level = 0
+        for t, label, color in sorted_events:
+            # Reset level if far enough apart, else increment
+            if t - prev_t > 3.0:
+                level = 0
+            else:
+                level = (level + 1) % 3
+            y_offset = -30 - level * 24
+            fig.add_annotation(
+                x=t, y=1.05, xref='x', yref='y domain',
+                text=f'<b>{label}</b>', showarrow=True, arrowhead=2, arrowsize=0.8,
+                arrowcolor=color, font=dict(size=8, color=color),
+                bgcolor='rgba(255,255,255,0.92)', bordercolor=color,
+                borderwidth=1, borderpad=3, ax=0, ay=y_offset,
+                row=1, col=1,
+            )
+            prev_t = t
 
     # ── Row 2: Tremor Ribbon with frequency stability ──
     freq_stab = primary['freq_stability']
@@ -862,12 +865,43 @@ def make_motor_landscape(tulip_id, task):
 
     # Layout
     task_label = TASK_LABELS_KR.get(task, task)
+
+    # Subplot title labels — placed at bottom-center of each subplot
+    _subplot_labels = [
+        (1, 'Clinical Saliency Skyline — Movement Abnormality Intensity'),
+        (2, 'Tremor Persistence (4-12 Hz power + frequency stability)'),
+        (3, 'Timing Instability (rhythm irregularity)'),
+        (4, 'Movement Amplitude (progressive decay detection)'),
+        (5, f'Amplitude Asymmetry (|L-R|/mean, dominant: {dominant_side})'),
+    ]
+    # yref for each row's x-axis domain (plotly names: x, x2, x3...)
+    _yref_map = {1: 'y', 2: 'y2', 3: 'y3', 4: 'y4', 5: 'y5'}
+    for row_num, label_text in _subplot_labels:
+        yref = f'{_yref_map[row_num]} domain'
+        fig.add_annotation(
+            text=f'<b>{label_text}</b>',
+            x=0.5, xref='paper',
+            y=-0.02, yref=yref,
+            showarrow=False,
+            font=dict(size=10, color='#4a5568'),
+            yanchor='top',
+        )
+
+    # Visual separator lines between subplots (horizontal rules)
+    for row_num in [1, 2, 3, 4]:
+        yref = f'{_yref_map[row_num]} domain'
+        fig.add_shape(
+            type='line', x0=0, x1=1, y0=-0.06, y1=-0.06,
+            xref='paper', yref=yref,
+            line=dict(color='#e2e8f0', width=1, dash='dot'),
+        )
+
     fig.update_layout(
         title=dict(
             text=f'Clinical Motor Event Landscape — {task_label}',
             font=dict(size=15),
         ),
-        height=800,
+        height=900,
         plot_bgcolor='white', paper_bgcolor='white',
         font=dict(family='-apple-system, Segoe UI, sans-serif', size=11, color='#2c3e50'),
         margin=dict(l=60, r=20, t=100, b=45),
@@ -878,6 +912,17 @@ def make_motor_landscape(tulip_id, task):
     fig.update_yaxes(title_text='CV', row=3, col=1)
     fig.update_yaxes(title_text='RMS (g)', row=4, col=1)
     fig.update_yaxes(title_text='|L-R|/μ', row=5, col=1)
+
+    # Add light background color alternation for row separation
+    for row_num in [2, 4]:
+        yref = _yref_map[row_num]
+        fig.add_shape(
+            type='rect', x0=0, x1=1, y0=0, y1=1,
+            xref='paper', yref=f'{yref} domain',
+            fillcolor='rgba(247,250,252,0.5)', line_width=0,
+            layer='below',
+        )
+
     return fig
 
 
@@ -1479,24 +1524,24 @@ def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
         ),
         xaxis=dict(
             range=[0, 100], gridcolor='#edf2f7', dtick=25,
-            title=None,
+            title=None, side='bottom',
         ),
         yaxis=dict(autorange='reversed'),
         height=300,
         plot_bgcolor='white', paper_bgcolor='white',
         font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
-        margin=dict(l=200, r=30, t=75, b=55),
+        margin=dict(l=200, r=30, t=100, b=40),
     )
-    # Zone labels below bars — use xref='x', yref='paper' for stable positioning
+    # Zone labels at TOP of chart — above the bars, below the title
     for x_pos, label, color in [
         (17.5, 'Healthy-like', '#38a169'),
         (50, 'Ambiguous', '#805ad5'),
         (82.5, 'PD-like', '#e53e3e'),
     ]:
         fig.add_annotation(
-            x=x_pos, y=-0.08, xref='x', yref='paper',
+            x=x_pos, y=1.08, xref='x', yref='paper',
             text=f'<b>{label}</b>', showarrow=False,
-            font=dict(size=10, color=color),
+            font=dict(size=11, color=color),
         )
     return fig
 
