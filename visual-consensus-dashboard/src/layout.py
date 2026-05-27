@@ -342,19 +342,17 @@ def build_tab_landscape():
 
 
 def build_tab_video():
-    """Tab 6: Video Analysis."""
+    """Tab 6: Video Analysis — patient-specific videos from R2 CDN."""
     return html.Div([
         # Controls
         html.Div([
             html.Div([
-                html.Label('Side:', className='inline-label'),
+                html.Label('Video Type:', className='inline-label'),
                 dcc.Dropdown(
-                    id='video-side-dropdown',
-                    options=[
-                        {'label': 'Left Hand', 'value': 'left'},
-                        {'label': 'Right Hand', 'value': 'right'},
-                    ],
-                    value='left', clearable=False, className='inline-dropdown',
+                    id='video-type-dropdown',
+                    options=[],  # dynamically populated per patient
+                    value=None, clearable=False, className='inline-dropdown',
+                    placeholder='Select patient first...',
                 ),
             ], className='inline-control'),
             html.Div([

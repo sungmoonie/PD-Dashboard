@@ -61,61 +61,40 @@ app.layout = create_layout()
 
 
 # ══════════════════════════════════════════════════════════════
-#  VIDEO STREAMING
+#  VIDEO STREAMING — Cloudflare R2 CDN
 # ══════════════════════════════════════════════════════════════
 
-GITHUB_REPO = 'sungmoonie/PD-Dashboard'
-GITHUB_BRANCH = 'main'
+R2_BASE = 'https://pub-5e7cb79a175143fd80bb9497eeaa4e41.r2.dev'
 
-VIDEO_FOLDERS = {
-    'left': '7. Finger_tapping_left',
-    'right': '8. FInger_tapping_right',
+# R2 folder mapping: (tulip_id, video_type) → R2 folder key
+# video_type values match dropdown: 'toe_left', 'toe_right', 'resting'
+R2_VIDEO_CATALOG = {
+    'TULIP_001': {
+        'toe_left': 'TULIP_001_17. Toe_tapping_left',
+        'toe_right': 'TULIP_001_18. Toe_tapping_right',
+    },
+    'TULIP_008': {
+        'toe_left': 'TULIP_008_17. Toe_tapping_left',
+        'toe_right': 'TULIP_008_18. Toe_tapping_right',
+        'resting': 'TULIP_008_26. Resting & hand tremor',
+    },
+}
+
+VIDEO_TYPE_LABELS = {
+    'toe_left': 'Toe Tapping (Left)',
+    'toe_right': 'Toe Tapping (Right)',
+    'resting': 'Resting & Hand Tremor',
 }
 
 
-def _cdn_video_url(side, camera):
-    """Build jsDelivr CDN URL for a video file (mirrors GitHub)."""
-    folder = VIDEO_FOLDERS.get(side, VIDEO_FOLDERS['left'])
-    # jsDelivr format: https://cdn.jsdelivr.net/gh/user/repo@branch/path
-    folder_encoded = folder.replace(' ', '%20')
-    return (f'https://cdn.jsdelivr.net/gh/{GITHUB_REPO}@{GITHUB_BRANCH}/'
-            f'{folder_encoded}/{camera}')
-
-
-def _is_local_video_available(side, camera):
-    """Check if video file exists locally."""
-    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    video_dir = os.path.join(project_dir, VIDEO_FOLDERS.get(side, VIDEO_FOLDERS['left']))
-    return os.path.exists(os.path.join(video_dir, camera))
-
-
-@server.route('/video/<folder>/<camera>')
-def serve_video(folder, camera):
-    """Serve video locally if available, otherwise redirect to GitHub CDN."""
-    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    side = 'left' if folder == 'left' else 'right'
-    video_dir = os.path.join(project_dir, VIDEO_FOLDERS[side])
-    video_path = os.path.join(video_dir, camera)
-
-    # If local file not found (Vercel deployment), redirect to CDN
-    if not os.path.exists(video_path):
-        return redirect(_cdn_video_url(side, camera), code=302)
-
-    file_size = os.path.getsize(video_path)
-    range_header = request.headers.get('Range')
-
-    if range_header:
-        byte_start = int(range_header.replace('bytes=', '').split('-')[0])
-        byte_end = min(byte_start + 1024 * 1024, file_size - 1)
-        with open(video_path, 'rb') as f:
-            f.seek(byte_start)
-            data = f.read(byte_end - byte_start + 1)
-        resp = Response(data, status=206, mimetype='video/mp4')
-        resp.headers['Content-Range'] = f'bytes {byte_start}-{byte_end}/{file_size}'
-        resp.headers['Accept-Ranges'] = 'bytes'
-        resp.headers['Content-Length'] = str(len(data))
-        return resp
-    return send_file(video_path, mimetype='video/mp4')
+def _r2_video_url(tulip_id, video_type, camera):
+    """Build Cloudflare R2 CDN URL for a video file."""
+    patient_catalog = R2_VIDEO_CATALOG.get(tulip_id, {})
+    folder = patient_catalog.get(video_type)
+    if not folder:
+        return None
+    folder_encoded = folder.replace(' ', '%20').replace('&', '%26')
+    return f'{R2_BASE}/{folder_encoded}/{camera}'
 
 
 # ══════════════════════════════════════════════════════════════
@@ -601,7 +580,23 @@ def update_summary(tulip_id):
     return verdict, findings, fig_radar, task_table
 
 
-# ─── Tab 5: Video ───
+# ─── Tab 5: Video — dynamic video type options per patient ───
+@app.callback(
+    Output('video-type-dropdown', 'options'),
+    Output('video-type-dropdown', 'value'),
+    Input('patient-dropdown', 'value'),
+)
+def update_video_type_options(tulip_id):
+    """Update available video types based on patient's R2 catalog."""
+    if not tulip_id or tulip_id not in R2_VIDEO_CATALOG:
+        return [], None
+    catalog = R2_VIDEO_CATALOG[tulip_id]
+    options = [{'label': VIDEO_TYPE_LABELS.get(k, k), 'value': k}
+               for k in catalog]
+    default = options[0]['value'] if options else None
+    return options, default
+
+
 @app.callback(
     Output('video-player-container', 'children'),
     Output('motion-timeline', 'figure'),
@@ -610,25 +605,29 @@ def update_summary(tulip_id):
     Output('video-right-taps', 'children'),
     Output('video-l-cv', 'children'),
     Output('video-r-cv', 'children'),
-    Input('video-side-dropdown', 'value'),
+    Input('patient-dropdown', 'value'),
+    Input('video-type-dropdown', 'value'),
     Input('video-camera-dropdown', 'value'),
 )
-def update_video(side, camera):
-    if not side or not camera:
+def update_video(tulip_id, video_type, camera):
+    if not tulip_id or not video_type or not camera:
         return (html.P('Select video'), _empty_fig(), _empty_fig(),
                 '—', '—', '—', '—')
 
-    # Video player — use CDN URL directly if local file not available (Vercel)
-    if _is_local_video_available(side, camera):
-        video_url = f'/video/{side}/{camera}'
-    else:
-        video_url = _cdn_video_url(side, camera)
+    # Build CDN URL
+    video_url = _r2_video_url(tulip_id, video_type, camera)
+    if not video_url:
+        return (html.P('이 환자의 영상이 아직 업로드되지 않았습니다.',
+                        style={'color': '#718096', 'padding': '20px'}),
+                _empty_fig(), _empty_fig(), '—', '—', '—', '—')
+
     player = html.Video(
         src=video_url, controls=True, className='video-player',
         style={'width': '100%', 'borderRadius': '8px'},
     )
 
-    # Analysis
+    # Analysis (existing video_data is for finger tapping — show if available)
+    side = 'left' if 'left' in video_type else 'right'
     side_data = video_data.get(side, {})
     cam_data = side_data.get(camera, {})
 
