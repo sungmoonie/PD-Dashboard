@@ -866,15 +866,13 @@ def make_motor_landscape(tulip_id, task):
     # Layout
     task_label = TASK_LABELS_KR.get(task, task)
 
-    # Subplot title labels — placed at bottom-center of each subplot
+    # Subplot title labels — rows 1-4 at bottom, row 5 at top (to avoid Time(s) overlap)
     _subplot_labels = [
         (1, 'Clinical Saliency Skyline — Movement Abnormality Intensity'),
         (2, 'Tremor Persistence (4-12 Hz power + frequency stability)'),
         (3, 'Timing Instability (rhythm irregularity)'),
         (4, 'Movement Amplitude (progressive decay detection)'),
-        (5, f'Amplitude Asymmetry (|L-R|/mean, dominant: {dominant_side})'),
     ]
-    # yref for each row's x-axis domain (plotly names: x, x2, x3...)
     _yref_map = {1: 'y', 2: 'y2', 3: 'y3', 4: 'y4', 5: 'y5'}
     for row_num, label_text in _subplot_labels:
         yref = f'{_yref_map[row_num]} domain'
@@ -886,6 +884,15 @@ def make_motor_landscape(tulip_id, task):
             font=dict(size=10, color='#4a5568'),
             yanchor='top',
         )
+    # Row 5 title at top-left to avoid clash with x-axis "Time (s)"
+    fig.add_annotation(
+        text=f'<b>Amplitude Asymmetry (|L-R|/mean, dominant: {dominant_side})</b>',
+        x=0.0, xref='paper',
+        y=1.0, yref='y5 domain',
+        showarrow=False,
+        font=dict(size=10, color='#4a5568'),
+        xanchor='left', yanchor='bottom',
+    )
 
     # Visual separator lines between subplots (horizontal rules)
     for row_num in [1, 2, 3, 4]:
@@ -1736,7 +1743,10 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
     if df.empty:
         return _empty_fig('No data')
 
-    tasks = SENSOR_TASKS
+    # Alignment tasks first, then others alphabetically
+    alignment = [t for t in MATCHING_TASKS if t in SENSOR_TASKS]
+    others = [t for t in SENSOR_TASKS if t not in MATCHING_TASKS]
+    tasks = alignment + others
     task_labels = [TASK_LABELS_KR.get(t, t) for t in tasks]
 
     fig = go.Figure()
@@ -1784,26 +1794,6 @@ def make_task_profile_comparison(group_stats_df, highlight_tulip=None):
                             line=dict(width=2, color='white')),
                 name=f'★ {_display_id(highlight_tulip)}',
             ))
-
-            # Mark Layer A tasks (alignment evidence)
-            for i, task in enumerate(tasks):
-                if task in MATCHING_TASKS:
-                    fig.add_annotation(
-                        x=task_labels[i], y=new_vals[i],
-                        text='A', showarrow=False,
-                        font=dict(size=8, color='white'),
-                        bgcolor='#2b6cb0', borderpad=2,
-                        yshift=-18,
-                    )
-
-    # Layer legend
-    fig.add_annotation(
-        x=0.01, y=0.99, xref='paper', yref='paper',
-        text='<b>A</b> = Alignment evidence (Entrainment+Relaxed)<br>'
-             'Others = Hypothetical multimodal expansion',
-        showarrow=False, font=dict(size=9, color='#718096'),
-        align='left', bgcolor='rgba(255,255,255,0.8)',
-    )
 
     fig.update_layout(
         title=dict(text='Movement Profile — Reference Comparison', font=dict(size=13)),
