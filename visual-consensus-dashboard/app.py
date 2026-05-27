@@ -627,9 +627,9 @@ def update_video(tulip_id, video_type, camera):
             src=video_url, controls=True, autoPlay=False,
             style={'width': '100%', 'borderRadius': '8px', 'background': '#1a202c'},
         ),
-        html.A('영상이 안 보이면 클릭 (직접 재생)', href=video_url, target='_blank',
-               style={'fontSize': '11px', 'color': '#805ad5', 'marginTop': '4px',
-                      'display': 'block'}),
+        html.A('🔍 영상 크게 보기', href=video_url, target='_blank',
+               style={'fontSize': '12px', 'color': '#805ad5', 'marginTop': '6px',
+                      'display': 'inline-block', 'fontWeight': '600'}),
     ])
 
     # Analysis (existing video_data is for finger tapping — show if available)
