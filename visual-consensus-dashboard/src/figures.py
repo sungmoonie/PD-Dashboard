@@ -2,6 +2,7 @@
 
 import plotly.graph_objects as go
 import numpy as np
+import pandas as pd
 from plotly.subplots import make_subplots
 
 LAYOUT_DEFAULTS = dict(
@@ -503,6 +504,303 @@ def make_tapping_summary_chart(left_data, right_data):
         font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
     )
     return fig
+
+
+def _peak_stats(signal, fps=80.0):
+    arr = np.asarray(signal, dtype=np.float32)
+    if arr.size < 3:
+        return 0, 0.0
+    thr = float(np.mean(arr) + np.std(arr))
+    peaks = []
+    for i in range(1, arr.size - 1):
+        if arr[i] > thr and arr[i] > arr[i - 1] and arr[i] >= arr[i + 1]:
+            peaks.append(i)
+    if len(peaks) < 2:
+        return len(peaks), 0.0
+    intervals = np.diff(peaks) / max(float(fps), 1e-6)
+    mean_int = float(np.mean(intervals))
+    cv = float(np.std(intervals) / mean_int) if mean_int > 1e-8 else 0.0
+    return len(peaks), cv
+
+
+def make_video_feature_timeline(feature_df, video_type, camera=''):
+    """Task-aware feature timeline for Video Analysis tab."""
+    if feature_df is None or feature_df.empty:
+        return _empty_fig('영상 feature 데이터 없음')
+
+    fig = go.Figure()
+    x = feature_df['frame_index'] if 'frame_index' in feature_df.columns else np.arange(len(feature_df))
+    t = np.asarray(x, dtype=np.float32) / 80.0  # dataset default fps
+
+    if video_type in ('toe_left', 'toe_right'):
+        y_main = feature_df.get('toe_tapping_rate_proxy', pd.Series(np.zeros(len(feature_df))))
+        y_l = feature_df.get('left_toe_speed', pd.Series(np.zeros(len(feature_df))))
+        y_r = feature_df.get('right_toe_speed', pd.Series(np.zeros(len(feature_df))))
+        y_asym = feature_df.get('toe_lr_asymmetry', pd.Series(np.zeros(len(feature_df))))
+
+        fig.add_trace(go.Scatter(x=t, y=y_main, mode='lines', name='Toe tapping rate proxy',
+                                 line=dict(color='#2b6cb0', width=1.8)))
+        fig.add_trace(go.Scatter(x=t, y=y_l, mode='lines', name='Left toe speed',
+                                 line=dict(color='#4299e1', width=1.1), opacity=0.8))
+        fig.add_trace(go.Scatter(x=t, y=y_r, mode='lines', name='Right toe speed',
+                                 line=dict(color='#fc8181', width=1.1), opacity=0.8))
+        fig.add_trace(go.Scatter(x=t, y=y_asym, mode='lines', name='Toe L/R asymmetry',
+                                 line=dict(color='#805ad5', width=1.1, dash='dot')))
+
+        n_peaks, _ = _peak_stats(y_main, fps=80.0)
+        mean_asym = float(np.nanmean(np.asarray(y_asym, dtype=np.float32))) if len(y_asym) else 0.0
+        fig.update_layout(
+            title=dict(text=f'Toe Tapping Timeline — {camera} (peaks≈{n_peaks}, asym={mean_asym:.3f})', font=dict(size=14)),
+            xaxis=dict(title='Time (s)', gridcolor='#edf2f7'),
+            yaxis=dict(title='Speed / Rate proxy', gridcolor='#edf2f7'),
+            legend=dict(orientation='h', y=-0.18),
+        )
+        return _apply_defaults(fig, height=350)
+
+    if video_type == 'resting':
+        y_l = feature_df.get('left_tremor_amp_proxy', pd.Series(np.zeros(len(feature_df))))
+        y_r = feature_df.get('right_tremor_amp_proxy', pd.Series(np.zeros(len(feature_df))))
+        y_asym = feature_df.get('upper_limb_lr_asymmetry', pd.Series(np.zeros(len(feature_df))))
+
+        fig.add_trace(go.Scatter(x=t, y=y_l, mode='lines', name='Left tremor proxy',
+                                 line=dict(color='#4299e1', width=1.6)))
+        fig.add_trace(go.Scatter(x=t, y=y_r, mode='lines', name='Right tremor proxy',
+                                 line=dict(color='#fc8181', width=1.6)))
+        fig.add_trace(go.Scatter(x=t, y=y_asym, mode='lines', name='Upper-limb asymmetry',
+                                 line=dict(color='#805ad5', width=1.2, dash='dot')))
+        fig.update_layout(
+            title=dict(text=f'Resting Tremor Timeline — {camera}', font=dict(size=14)),
+            xaxis=dict(title='Time (s)', gridcolor='#edf2f7'),
+            yaxis=dict(title='Tremor / Asymmetry proxy', gridcolor='#edf2f7'),
+            legend=dict(orientation='h', y=-0.18),
+        )
+        return _apply_defaults(fig, height=350)
+
+    return _empty_fig('지원하지 않는 video type')
+
+
+def make_video_lr_feature_comparison(primary_df, counterpart_df, video_type):
+    """L/R comparison chart for task-aware video features."""
+    fig = go.Figure()
+
+    if primary_df is None or primary_df.empty:
+        return _empty_fig('비교할 feature 데이터 없음')
+
+    x1 = primary_df['frame_index'] if 'frame_index' in primary_df.columns else np.arange(len(primary_df))
+    t1 = np.asarray(x1, dtype=np.float32) / 80.0
+
+    if video_type in ('toe_left', 'toe_right'):
+        y_l = primary_df.get('left_toe_speed', pd.Series(np.zeros(len(primary_df))))
+        y_r = primary_df.get('right_toe_speed', pd.Series(np.zeros(len(primary_df))))
+        y_l_v = primary_df.get('left_toe_vertical_delta', pd.Series(np.zeros(len(primary_df))))
+        y_r_v = primary_df.get('right_toe_vertical_delta', pd.Series(np.zeros(len(primary_df))))
+        fig.add_trace(go.Scatter(x=t1, y=y_l, mode='lines', name='Left toe speed',
+                                 line=dict(color='#4299e1', width=1.6)))
+        fig.add_trace(go.Scatter(x=t1, y=y_r, mode='lines', name='Right toe speed',
+                                 line=dict(color='#fc8181', width=1.6)))
+        fig.add_trace(go.Scatter(x=t1, y=y_l_v, mode='lines', name='Left toe vertical delta',
+                                 line=dict(color='#2b6cb0', width=1.0, dash='dot'), opacity=0.7))
+        fig.add_trace(go.Scatter(x=t1, y=y_r_v, mode='lines', name='Right toe vertical delta',
+                                 line=dict(color='#c53030', width=1.0, dash='dot'), opacity=0.7))
+        fig.update_layout(
+            title=dict(text='Toe Tapping Bilateral Comparison (same task)', font=dict(size=14)),
+            xaxis=dict(title='Time (s)', gridcolor='#edf2f7'),
+            yaxis=dict(title='Toe kinematic proxies', gridcolor='#edf2f7'),
+            legend=dict(orientation='h', y=-0.15),
+        )
+        return _apply_defaults(fig, height=380)
+
+    # resting: both sides in one file
+    y_l = primary_df.get('left_tremor_amp_proxy', pd.Series(np.zeros(len(primary_df))))
+    y_r = primary_df.get('right_tremor_amp_proxy', pd.Series(np.zeros(len(primary_df))))
+    fig.add_trace(go.Scatter(x=t1, y=y_l, mode='lines', name='Left tremor proxy',
+                             line=dict(color='#4299e1', width=1.6)))
+    fig.add_trace(go.Scatter(x=t1, y=y_r, mode='lines', name='Right tremor proxy',
+                             line=dict(color='#fc8181', width=1.6)))
+    fig.update_layout(
+        title=dict(text='Resting Tremor L/R Comparison', font=dict(size=14)),
+        xaxis=dict(title='Time (s)', gridcolor='#edf2f7'),
+        yaxis=dict(title='Tremor proxy', gridcolor='#edf2f7'),
+        legend=dict(orientation='h', y=-0.15),
+    )
+    return _apply_defaults(fig, height=380)
+
+
+def summarize_video_task_metrics(primary_df, counterpart_df, video_type):
+    """Return 4 card values: left_taps, right_taps, left_cv, right_cv."""
+    if primary_df is None or primary_df.empty:
+        return '—', '—', '—', '—'
+
+    if video_type in ('toe_left', 'toe_right'):
+        y_l = primary_df.get('left_toe_speed', pd.Series(np.zeros(len(primary_df))))
+        y_r = primary_df.get('right_toe_speed', pd.Series(np.zeros(len(primary_df))))
+        l_taps, l_cv = _peak_stats(y_l, fps=80.0)
+        r_taps, r_cv = _peak_stats(y_r, fps=80.0)
+        return str(l_taps), str(r_taps), f'{l_cv:.3f}', f'{r_cv:.3f}'
+
+    y_l = primary_df.get('left_tremor_amp_proxy', pd.Series(np.zeros(len(primary_df))))
+    y_r = primary_df.get('right_tremor_amp_proxy', pd.Series(np.zeros(len(primary_df))))
+    l_taps, l_cv = _peak_stats(y_l, fps=80.0)
+    r_taps, r_cv = _peak_stats(y_r, fps=80.0)
+    return str(l_taps), str(r_taps), f'{l_cv:.3f}', f'{r_cv:.3f}'
+
+
+def _intervals_from_signal(signal, fps=80.0):
+    """Extract peak-to-peak intervals from a 1D signal."""
+    arr = np.asarray(signal, dtype=np.float32)
+    if arr.size < 5:
+        return np.array([], dtype=np.float32)
+    thr = float(np.mean(arr) + np.std(arr))
+    peaks = []
+    for i in range(1, arr.size - 1):
+        if arr[i] > thr and arr[i] > arr[i - 1] and arr[i] >= arr[i + 1]:
+            peaks.append(i)
+    if len(peaks) < 2:
+        return np.array([], dtype=np.float32)
+    return np.diff(np.asarray(peaks, dtype=np.float32)) / max(float(fps), 1e-6)
+
+
+def make_video_interval_distribution(feature_df, video_type):
+    """Clinical rhythm view: inter-event interval distribution by side."""
+    if feature_df is None or feature_df.empty:
+        return _empty_fig('Interval 데이터 없음', height=320)
+
+    if video_type in ('toe_left', 'toe_right'):
+        left_sig = feature_df.get('left_toe_speed', pd.Series(np.zeros(len(feature_df))))
+        right_sig = feature_df.get('right_toe_speed', pd.Series(np.zeros(len(feature_df))))
+        title = 'Toe Tapping Inter-Tap Interval Distribution'
+    elif video_type == 'resting':
+        left_sig = feature_df.get('left_tremor_amp_proxy', pd.Series(np.zeros(len(feature_df))))
+        right_sig = feature_df.get('right_tremor_amp_proxy', pd.Series(np.zeros(len(feature_df))))
+        title = 'Resting Tremor Peak Interval Distribution'
+    else:
+        return _empty_fig('지원하지 않는 video type', height=320)
+
+    li = _intervals_from_signal(left_sig, fps=80.0)
+    ri = _intervals_from_signal(right_sig, fps=80.0)
+
+    fig = go.Figure()
+    fig.add_trace(go.Violin(
+        y=li if li.size else [0.0],
+        name='Left',
+        box_visible=True,
+        meanline_visible=True,
+        line_color='#4299e1',
+        fillcolor='rgba(66,153,225,0.35)',
+        opacity=0.9,
+    ))
+    fig.add_trace(go.Violin(
+        y=ri if ri.size else [0.0],
+        name='Right',
+        box_visible=True,
+        meanline_visible=True,
+        line_color='#fc8181',
+        fillcolor='rgba(252,129,129,0.35)',
+        opacity=0.9,
+    ))
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14)),
+        yaxis=dict(title='Interval (s)', gridcolor='#edf2f7'),
+        xaxis=dict(title='Side'),
+        violinmode='group',
+        legend=dict(orientation='h', y=-0.2),
+    )
+    return _apply_defaults(fig, height=320)
+
+
+def make_video_tremor_spectrogram(feature_df, video_type):
+    """Time-frequency view for resting tremor (clinical readability)."""
+    if feature_df is None or feature_df.empty:
+        return _empty_fig('Spectrogram 데이터 없음', height=320)
+
+    if video_type != 'resting':
+        return _empty_fig('Resting & hand tremor task에서만 표시됩니다.', height=320)
+
+    sig_l = np.asarray(feature_df.get('left_tremor_amp_proxy', pd.Series(np.zeros(len(feature_df)))), dtype=np.float32)
+    sig_r = np.asarray(feature_df.get('right_tremor_amp_proxy', pd.Series(np.zeros(len(feature_df)))), dtype=np.float32)
+    sig = 0.5 * (sig_l + sig_r)
+    if sig.size < 64:
+        return _empty_fig('Spectrogram을 그리기 위한 길이가 부족합니다.', height=320)
+
+    fs = 80.0
+    win = 128
+    hop = 32
+    freqs = np.fft.rfftfreq(win, d=1.0 / fs)
+    mask = (freqs >= 1.0) & (freqs <= 12.0)
+    bands = freqs[mask]
+    cols = max(1, (sig.size - win) // hop + 1)
+    spec = np.zeros((bands.size, cols), dtype=np.float32)
+    times = np.zeros(cols, dtype=np.float32)
+    window = np.hanning(win).astype(np.float32)
+
+    for i in range(cols):
+        s = i * hop
+        e = s + win
+        frame = sig[s:e]
+        frame = frame - np.mean(frame)
+        fft_pow = np.abs(np.fft.rfft(frame * window)) ** 2
+        spec[:, i] = fft_pow[mask]
+        times[i] = (s + e) / 2.0 / fs
+
+    spec_log = np.log10(spec + 1e-8)
+    fig = go.Figure(data=go.Heatmap(
+        x=times,
+        y=bands,
+        z=spec_log,
+        colorscale='Viridis',
+        colorbar=dict(title='log10(power)'),
+    ))
+    fig.update_layout(
+        title=dict(text='Resting Tremor Spectrogram (1-12Hz)', font=dict(size=14)),
+        xaxis=dict(title='Time (s)', gridcolor='#edf2f7'),
+        yaxis=dict(title='Frequency (Hz)', gridcolor='#edf2f7'),
+    )
+    return _apply_defaults(fig, height=320)
+
+
+def make_video_symmetry_trend(feature_df, video_type):
+    """Clinical asymmetry tracking over time."""
+    if feature_df is None or feature_df.empty:
+        return _empty_fig('Symmetry 데이터 없음', height=320)
+
+    x = feature_df['frame_index'] if 'frame_index' in feature_df.columns else np.arange(len(feature_df))
+    t = np.asarray(x, dtype=np.float32) / 80.0
+
+    if video_type in ('toe_left', 'toe_right'):
+        asym = np.asarray(feature_df.get('toe_lr_asymmetry', pd.Series(np.zeros(len(feature_df)))), dtype=np.float32)
+        title = 'Toe Tapping Symmetry Trend'
+    elif video_type == 'resting':
+        asym = np.asarray(feature_df.get('upper_limb_lr_asymmetry', pd.Series(np.zeros(len(feature_df)))), dtype=np.float32)
+        title = 'Resting Tremor Symmetry Trend'
+    else:
+        return _empty_fig('지원하지 않는 video type', height=320)
+
+    if asym.size == 0:
+        return _empty_fig('Symmetry 데이터 없음', height=320)
+
+    win = 40
+    if asym.size >= win:
+        kernel = np.ones(win, dtype=np.float32) / float(win)
+        trend = np.convolve(asym, kernel, mode='same')
+    else:
+        trend = asym
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=t, y=asym, mode='lines', name='Raw asymmetry',
+        line=dict(color='rgba(128,90,213,0.35)', width=1.0),
+    ))
+    fig.add_trace(go.Scatter(
+        x=t, y=trend, mode='lines', name='Smoothed trend',
+        line=dict(color='#6b46c1', width=2.2),
+    ))
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14)),
+        xaxis=dict(title='Time (s)', gridcolor='#edf2f7'),
+        yaxis=dict(title='Asymmetry index', gridcolor='#edf2f7'),
+        legend=dict(orientation='h', y=-0.2),
+    )
+    return _apply_defaults(fig, height=320)
 
 
 # ══════════════════════════════════════════════════════════════

@@ -1,20 +1,14 @@
-opencv-python-headless
 numpy
 pandas
-scikit-learn
-optuna
-matplotlib
-seaborn
-joblib
-lightgbm
-catboost
-shap
+opencv-python-headless
 torch
 torchvision
 hydra-core
 einops
 simplepyutils
-ultralytics
 PyYAML
 easydict
 timm
+
+# MeTRAbs ecosystem packages
+barecat==0.2.7
