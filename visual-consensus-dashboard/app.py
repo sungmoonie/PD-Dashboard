@@ -73,13 +73,20 @@ VIDEO_FOLDERS = {
 }
 
 
-def _github_video_url(side, camera):
-    """Build GitHub raw URL for a video file."""
+def _cdn_video_url(side, camera):
+    """Build jsDelivr CDN URL for a video file (mirrors GitHub)."""
     folder = VIDEO_FOLDERS.get(side, VIDEO_FOLDERS['left'])
-    # URL-encode the space in folder name
+    # jsDelivr format: https://cdn.jsdelivr.net/gh/user/repo@branch/path
     folder_encoded = folder.replace(' ', '%20')
-    return (f'https://raw.githubusercontent.com/{GITHUB_REPO}/'
-            f'{GITHUB_BRANCH}/{folder_encoded}/{camera}')
+    return (f'https://cdn.jsdelivr.net/gh/{GITHUB_REPO}@{GITHUB_BRANCH}/'
+            f'{folder_encoded}/{camera}')
+
+
+def _is_local_video_available(side, camera):
+    """Check if video file exists locally."""
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    video_dir = os.path.join(project_dir, VIDEO_FOLDERS.get(side, VIDEO_FOLDERS['left']))
+    return os.path.exists(os.path.join(video_dir, camera))
 
 
 @server.route('/video/<folder>/<camera>')
@@ -90,9 +97,9 @@ def serve_video(folder, camera):
     video_dir = os.path.join(project_dir, VIDEO_FOLDERS[side])
     video_path = os.path.join(video_dir, camera)
 
-    # If local file not found (Vercel deployment), redirect to GitHub
+    # If local file not found (Vercel deployment), redirect to CDN
     if not os.path.exists(video_path):
-        return redirect(_github_video_url(side, camera), code=302)
+        return redirect(_cdn_video_url(side, camera), code=302)
 
     file_size = os.path.getsize(video_path)
     range_header = request.headers.get('Range')
@@ -611,8 +618,11 @@ def update_video(side, camera):
         return (html.P('Select video'), _empty_fig(), _empty_fig(),
                 '—', '—', '—', '—')
 
-    # Video player
-    video_url = f'/video/{side}/{camera}'
+    # Video player — use CDN URL directly if local file not available (Vercel)
+    if _is_local_video_available(side, camera):
+        video_url = f'/video/{side}/{camera}'
+    else:
+        video_url = _cdn_video_url(side, camera)
     player = html.Video(
         src=video_url, controls=True, className='video-player',
         style={'width': '100%', 'borderRadius': '8px'},
