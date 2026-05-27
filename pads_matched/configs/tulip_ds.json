@@ -1,0 +1,19 @@
+
+{
+    "tulip_video_folder_link": {
+        "TULIP_001": {
+            "17. Toe_tapping_left": "https://drive.google.com/drive/folders/12MX41T5D79vONFWLejn7rX9RQ64CJIcS?usp=drive_link",
+            "18. Toe_tapping_right": "https://drive.google.com/drive/folders/1TX3u6nbtMKh_95hSAH9LTLNDwJJ7QfNV?usp=sharing",
+            "26. Resting & hand tremor": "https://drive.google.com/drive/folders/17q_fIj1dD-vol-GHqCpJdys8d5ve8j0K?usp=sharing"
+        },
+        "TULIP_008": {
+            "17. Toe_tapping_left": "https://drive.google.com/drive/folders/1I-MlMCUh71w9DRdSwJ4tYYRNnUe9LEpk?usp=sharing",
+            "18. Toe_tapping_right": "https://drive.google.com/drive/folders/1WrSr6H-1opxA4CguSyWL1Jo1O41heehF?usp=sharing",
+            "26. Resting & hand tremor": "https://drive.google.com/drive/folders/1eFGc7hiXZrbL8o--fKS4NYbvuuLMSXrQ?usp=sharing"
+        }
+    },
+    "metadata" : {
+        "tulip_pads_matched_base_dir" : "PD-Dashboard/pads_matched/by_tulip",
+        "tulip_gdrive_link": "https://drive.google.com/drive/folders/1cRxVZTtCiGixvShecCEgVCogqBB_buCf"
+    }
+}
