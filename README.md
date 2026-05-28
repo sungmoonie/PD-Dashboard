@@ -30,7 +30,9 @@
 | Visualization | **Plotly Express** + **Plotly Graph Objects** |
 | Backend | Dash callback 기반 Python backend |
 | Data Processing | pandas, numpy, scipy |
-| Data Storage | Demo CSV / JSON |
+| Data Storage | **SQLite + DuckDB + CSV/JSON** |
+| Metadata DB | **SQLite** (`DB/storage/sqlite/clinical_meta.db`) |
+| Analytics DB | **DuckDB** (`DB/storage/duckdb/features.duckdb`) |
 | Server | Dash 내장 Flask server |
 
 ### Full-Stack 구조
@@ -48,8 +50,10 @@
 │  Normative Z-score 계산                   │
 ├──────────────────────────────────────────┤
 │           Data Layer                     │
-│  Demo CSV / JSON 파일                     │
-│  → 추후 실제 PADS/TULIP 데이터로 교체      │
+│  SQLite: patient/visit/task/label metadata │
+│  DuckDB: frame-level video features        │
+│  CSV/JSON: ingestion source (PADS/TULIP)   │
+│  DB bootstrap: DB/sql + DB/scripts         │
 └──────────────────────────────────────────┘
 ```
 
