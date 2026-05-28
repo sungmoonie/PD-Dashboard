@@ -54,6 +54,24 @@ CREATE TABLE IF NOT EXISTS analytics.task_feature_summary (
     loaded_at TIMESTAMP DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS analytics.sensor_timeseries (
+    patient_id VARCHAR NOT NULL,
+    pads_id VARCHAR,
+    task_name VARCHAR NOT NULL,
+    wrist VARCHAR NOT NULL,
+    time DOUBLE,
+    accel_x DOUBLE,
+    accel_y DOUBLE,
+    accel_z DOUBLE,
+    gyro_x DOUBLE,
+    gyro_y DOUBLE,
+    gyro_z DOUBLE,
+    source_path VARCHAR,
+    loaded_at TIMESTAMP DEFAULT now()
+);
+
+-- analytics.frame_joints is created dynamically on first joint CSV ingest (wide schema).
+
 CREATE TABLE IF NOT EXISTS analytics.ingestion_log (
     source_path VARCHAR,
     source_hash VARCHAR,

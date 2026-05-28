@@ -122,8 +122,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest UPDRS label CSV files into SQLite.")
     parser.add_argument(
         "--sqlite-db",
-        default="DB/sqlite/clinical_meta.db",
-        help="SQLite DB path (default: DB/sqlite/clinical_meta.db)",
+        default="DB/storage/sqlite/clinical_meta.db",
+        help="SQLite DB path (default: DB/storage/sqlite/clinical_meta.db)",
     )
     parser.add_argument(
         "--labels-dir",

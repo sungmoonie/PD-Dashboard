@@ -132,8 +132,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest frame features into DuckDB.")
     parser.add_argument(
         "--duckdb-path",
-        default="DB/duckdb/features.duckdb",
-        help="DuckDB file path (default: DB/duckdb/features.duckdb)",
+        default="DB/storage/duckdb/features.duckdb",
+        help="DuckDB file path (default: DB/storage/duckdb/features.duckdb)",
     )
     parser.add_argument(
         "--features-root",

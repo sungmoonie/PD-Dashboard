@@ -61,6 +61,30 @@ CREATE TABLE IF NOT EXISTS clinical_labels (
     FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS nms_items (
+    item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id TEXT NOT NULL,
+    link_id TEXT,
+    item_text TEXT,
+    answer INTEGER,
+    source_path TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (patient_id) REFERENCES patients(patient_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS sensor_timeseries_index (
+    index_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_id TEXT NOT NULL,
+    pads_id TEXT,
+    task_name TEXT NOT NULL,
+    wrist TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    n_samples INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (patient_id, task_name, wrist),
+    FOREIGN KEY (patient_id) REFERENCES patients(patient_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS ingestion_log (
     ingest_id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_type TEXT NOT NULL,              -- labels_csv | features_csv | video
@@ -78,4 +102,6 @@ CREATE INDEX IF NOT EXISTS idx_tasks_visit ON tasks(visit_id);
 CREATE INDEX IF NOT EXISTS idx_assets_task ON video_assets(task_id);
 CREATE INDEX IF NOT EXISTS idx_labels_visit ON clinical_labels(visit_id);
 CREATE INDEX IF NOT EXISTS idx_labels_task ON clinical_labels(task_id);
+CREATE INDEX IF NOT EXISTS idx_nms_patient ON nms_items(patient_id);
+CREATE INDEX IF NOT EXISTS idx_ts_index_patient ON sensor_timeseries_index(patient_id);
 CREATE INDEX IF NOT EXISTS idx_ingest_source ON ingestion_log(source_type, source_path);

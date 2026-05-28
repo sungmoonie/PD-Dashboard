@@ -74,6 +74,22 @@ python3 DB/scripts/ingest_features_to_duckdb.py \
   --clear-existing
 ```
 
+### Full ingestion (recommended)
+
+Loads `labels_csv_files` + `pads_matched` into both DBs. **Video mp4 files are NOT stored** (only paths/metadata).
+
+```bash
+bash DB/scripts/run_all_ingest.sh
+```
+
+Individual scripts:
+
+- `ingest_labels_to_sqlite.py` — UPDRS labels
+- `ingest_pads_to_sqlite.py` — patients, NMS, video asset paths, timeseries index
+- `ingest_features_to_duckdb.py` — `Camera*_features.csv`
+- `ingest_joint_to_duckdb.py` — `Camera*_joint.csv`
+- `ingest_timeseries_to_duckdb.py` — sensor `movement/timeseries/*.txt`
+
 ## Vercel note
 
 For deployment, keep this folder as local/dev bootstrap.
