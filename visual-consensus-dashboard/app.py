@@ -129,15 +129,16 @@ def render_tab(tab):
     return html.Div('Select a tab')
 
 
-# ─── Hide right panel on Video tab ───
+# ─── Keep right panel visible on all tabs ───
 @app.callback(
     Output('right-panel', 'style'),
     Output('dashboard-grid', 'style'),
     Input('main-tabs', 'value'),
 )
 def toggle_right_panel(tab):
-    if tab == 'tab-video':
-        return {'display': 'none'}, {'gridTemplateColumns': '1fr'}
+    # [PRE] Previously, tab-video hid the right panel:
+    # if tab == 'tab-video':
+    #     return {'display': 'none'}, {'gridTemplateColumns': '1fr'}
     return {}, {}
 
 
