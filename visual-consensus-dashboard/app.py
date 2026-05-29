@@ -40,7 +40,7 @@ from src.figures import (
 from src.layout import (
     create_layout, build_tab_overview, build_tab_comparison,
     build_tab_tremor, build_tab_video,
-    build_tab_summary, UPDRS_ITEMS,
+    build_tab_summary, UPDRS_ITEMS, UPDRS_TASK_GROUPS,
 )
 
 # ─── Pre-load Data ───
@@ -773,7 +773,11 @@ def _build_clinician_comparison(tulip_id, user_scores):
     agree_count = 0
     total_compared = 0
 
-    for name in UPDRS_ITEMS:
+    # Aligned tasks only
+    aligned_indices = [idx for _, indices in UPDRS_TASK_GROUPS for idx in indices]
+    aligned_names = [UPDRS_ITEMS[i] for i in aligned_indices]
+
+    for name in aligned_names:
         if name not in user_scores:
             continue
 
