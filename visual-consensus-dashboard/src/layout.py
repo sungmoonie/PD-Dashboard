@@ -61,32 +61,30 @@ def _updrs_input(idx):
     """Create the appropriate input for a UPDRS item."""
     name = UPDRS_ITEMS[idx]
     if name == 'Dyskinesias':
-        return dcc.RadioItems(
+        return dcc.Dropdown(
             id={'type': 'updrs-score', 'index': idx},
             options=[{'label': 'No', 'value': 'No'}, {'label': 'Yes', 'value': 'Yes'}],
-            value=None, inline=True, className='updrs-radio',
-            labelClassName='updrs-radio-label',
-        )
-    elif name == 'Hoehn and Yahr Stage':
-        return dcc.RadioItems(
-            id={'type': 'updrs-score', 'index': idx},
-            options=[{'label': str(i), 'value': i} for i in range(6)],
-            value=None, inline=True, className='updrs-radio',
-            labelClassName='updrs-radio-label',
+            value=None, clearable=True, className='updrs-dropdown',
+            placeholder='—',
         )
     elif name == 'wholistic_decision':
-        return dcc.RadioItems(
+        return dcc.Dropdown(
             id={'type': 'updrs-score', 'index': idx},
             options=[{'label': 'PD', 'value': 'PD'}, {'label': 'HT', 'value': 'HT'}],
-            value=None, inline=True, className='updrs-radio',
-            labelClassName='updrs-radio-label',
+            value=None, clearable=True, className='updrs-dropdown',
+            placeholder='—',
+        )
+    elif name == 'Hoehn and Yahr Stage':
+        return dcc.Input(
+            id={'type': 'updrs-score', 'index': idx},
+            type='number', min=0, max=5, step=1,
+            placeholder='0-5', className='updrs-number-input',
         )
     else:
-        return dcc.RadioItems(
+        return dcc.Input(
             id={'type': 'updrs-score', 'index': idx},
-            options=[{'label': str(i), 'value': i} for i in range(5)],
-            value=None, inline=True, className='updrs-radio',
-            labelClassName='updrs-radio-label',
+            type='number', min=0, max=4, step=1,
+            placeholder='0-4', className='updrs-number-input',
         )
 
 

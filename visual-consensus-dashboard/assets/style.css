@@ -644,27 +644,26 @@ body {
     max-width: 120px;
 }
 
-.updrs-radio {
-    display: flex !important;
-    gap: 2px !important;
+.updrs-number-input {
+    width: 56px !important;
+    padding: 3px 6px !important;
+    font-size: 12px !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 4px !important;
+    text-align: center !important;
     flex-shrink: 0;
 }
 
-.updrs-radio-label {
-    font-size: 11px !important;
-    padding: 2px 6px !important;
-    border: 1px solid #e2e8f0 !important;
-    border-radius: 4px !important;
-    cursor: pointer !important;
-    text-align: center !important;
-    min-width: 24px !important;
-    transition: all 0.1s !important;
-    line-height: 1.4 !important;
+.updrs-number-input:focus {
+    outline: none !important;
+    border-color: #805ad5 !important;
+    box-shadow: 0 0 0 2px rgba(128,90,213,0.15) !important;
 }
 
-.updrs-radio-label:hover {
-    border-color: #805ad5 !important;
-    background: #faf5ff !important;
+.updrs-dropdown {
+    width: 70px !important;
+    font-size: 11px !important;
+    flex-shrink: 0;
 }
 
 /* ===== Clinician Comparison Table ===== */
