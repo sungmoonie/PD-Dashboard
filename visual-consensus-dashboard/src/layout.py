@@ -157,11 +157,11 @@ def create_layout():
 # ══════════════════════════════════════════════════════════════
 
 def build_tab_overview():
-    """Tab 1: Patient Overview — demographics + NMS + aligned task matrix."""
+    """Tab 1: Patient Overview — demographics + motor phenotype summary + asymmetry."""
     return html.Div([
         # Demographics
         html.Div(id='demographics-row', className='demographics-row'),
-        # Summary cards row
+        # Basic info cards
         html.Div([
             _card('ov-age', 'Age'),
             _card('ov-gender', 'Gender'),
@@ -169,37 +169,55 @@ def build_tab_overview():
             _card('ov-bmi', 'BMI'),
             _card('ov-duration', 'Disease Duration'),
         ], className='summary-cards-row'),
+        # Motor Phenotype Summary
+        html.Div([
+            html.H3('Motor Phenotype Summary', className='viz-title'),
+            html.P('Aligned tasks (Entrainment & Relaxed) 기반 motor phenotype 요약. '
+                   'Reference cohort 대비 motor 특성 유사도입니다 (진단 확률이 아님).',
+                   className='tab-description'),
+        ]),
+        html.Div([
+            _card('ov-phenotype', 'Motor Phenotype'),
+            _card('ov-proximity', 'Reference Similarity'),
+            _card('ov-asymmetry', 'Mean Asymmetry'),
+        ], className='summary-cards-row'),
         # NMS section
         html.Div([
             html.H3('Non-Motor Symptoms', className='viz-title'),
             html.Div(id='nms-content', className='nms-grid'),
         ], className='viz-block'),
-        # Bilateral Matrix (aligned tasks only)
+        # Bilateral Matrix (aligned tasks)
         html.Div([
             html.H3('Aligned Task Matrix (Entrainment & Relaxed)', className='viz-title'),
-            html.P('Toe Tapping(Entrainment) & Resting(Relaxed) 센서 데이터의 '
-                   '좌/우 4개 feature(Tremor, Amplitude, Rhythm, Jerk) 정규화 비교.',
+            html.P('좌/우 4개 feature(Tremor, Amplitude, Rhythm, Jerk) 정규화 비교.',
                    className='tab-description'),
             dcc.Graph(id='bilateral-matrix', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        # Asymmetry Group Comparison (patient-level overview)
+        html.Div([
+            html.H3('좌우 비대칭 — 그룹 비교', className='viz-title'),
+            html.P('환자의 평균 비대칭 지수가 확정된 PD/Healthy 그룹 분포에서 '
+                   '어디에 위치하는지 보여줍니다.',
+                   className='tab-description'),
+            dcc.Graph(id='asym-group-compare', config={'displayModeBar': False}),
         ], className='viz-block'),
     ])
 
 
 def build_tab_tremor():
-    """Tab 2: Tremor & Rhythm Analysis — aligned tasks focus."""
+    """Tab 2: Tremor & Rhythm — aligned tasks focus."""
     task_options = get_task_list()
     return html.Div([
         html.Div([
             html.H3('Tremor & Rhythm Analysis', className='viz-title'),
-            html.P('Aligned tasks (Entrainment = Toe Tapping 센서, Relaxed = Resting 센서)의 '
-                   '떨림 power, 주파수 대역, 리듬 안정성, 진폭 감소를 분석합니다.',
+            html.P('Aligned tasks (Entrainment = Toe Tapping, Relaxed = Resting)의 '
+                   '떨림 power, 주파수 대역, 리듬 안정성, 진폭 감소, 좌우 차이를 분석합니다.',
                    className='tab-description'),
         ]),
-        # ── Tremor Power Overview (both tasks, no selector needed) ──
+        # ── Tremor Power Overview (patient-level, both tasks) ──
         html.Div([
             html.H3('Tremor Power (4-12Hz) — L/R with Reference', className='viz-title'),
-            html.P('환자의 좌/우 tremor power를 PD/Healthy 그룹 평균과 비교합니다. '
-                   'PD 환자는 일반적으로 tremor power가 높습니다.',
+            html.P('환자의 좌/우 tremor power를 PD/Healthy 그룹 평균과 비교합니다.',
                    className='tab-description'),
             dcc.Graph(id='tremor-power-bars', config={'displayModeBar': False}),
         ], className='viz-block'),
@@ -214,27 +232,17 @@ def build_tab_tremor():
         # Tremor Band Breakdown
         html.Div([
             html.H3('Tremor Frequency Band Analysis', className='viz-title'),
-            html.P('Rest tremor (4-6Hz): PD 안정시 떨림의 특징적 주파수 대역. '
-                   'Action tremor (6-12Hz): 동작 중 떨림. '
+            html.P('Rest tremor (4-6Hz) vs Action tremor (6-12Hz). '
                    'Rest-dominant → PD 시사.',
                    className='tab-description'),
             dcc.Graph(id='tremor-band-chart', config={'displayModeBar': False}),
         ], className='viz-block'),
 
-        # Spectral Fingerprint
-        html.Div([
-            html.H3('Bilateral Spectral Fingerprint', className='viz-title'),
-            html.P('좌/우 손목 센서의 시간-주파수 분석. '
-                   '4-12Hz 대역(빨간 영역)에 지속적 power가 있으면 tremor 존재를 시사.',
-                   className='tab-description'),
-            dcc.Graph(id='tremor-spectral', config={'displayModeBar': False}),
-        ], className='viz-block'),
-
         # Rhythm Ladder
         html.Div([
             html.H3('Rhythm Instability Ladder', className='viz-title'),
-            html.P('반복 운동의 peak 감지 및 inter-peak interval CV. '
-                   'CV가 높을수록 리듬이 불규칙하여 bradykinesia를 시사.',
+            html.P('반복 운동의 inter-peak interval CV. '
+                   'CV가 높을수록 리듬이 불규칙 → bradykinesia 시사.',
                    className='tab-description'),
             dcc.Graph(id='tremor-rhythm', config={'displayModeBar': False}),
         ], className='viz-block'),
@@ -242,16 +250,30 @@ def build_tab_tremor():
         # Amplitude Decrement
         html.Div([
             html.H3('Amplitude Decrement Analysis', className='viz-title'),
-            html.P('반복 운동 시 시간에 따른 진폭 변화. '
-                   '진폭이 점진적으로 감소(declining slope)하면 '
+            html.P('시간에 따른 진폭 변화. 점진적 감소(declining slope)는 '
                    'PD bradykinesia의 핵심 지표인 decrement sequence를 시사.',
                    className='tab-description'),
             dcc.Graph(id='tremor-decrement', config={'displayModeBar': False}),
         ], className='viz-block'),
 
-        # Raw sensor (collapsible)
+        # L/R Feature Comparison (per task)
+        html.Div([
+            html.H3('Bilateral Feature Comparison', className='viz-title'),
+            html.P('좌/우 feature별(Tremor, Amplitude, Rhythm, Jerk) 값과 '
+                   '비대칭 지수 비교. 주황선(0.3) 이상이면 의미있는 비대칭.',
+                   className='tab-description'),
+            dcc.Graph(id='asym-feature-bars', config={'displayModeBar': False}),
+        ], className='viz-block'),
+
+        # Collapsible: Spectral Fingerprint + Raw sensor
         html.Details([
-            html.Summary('Raw 6-Axis Timeseries (접기/펼치기)', className='raw-toggle'),
+            html.Summary('Spectral Fingerprint & Raw Timeseries (상세 보기)', className='raw-toggle'),
+            html.Div([
+                html.H3('Bilateral Spectral Fingerprint', className='viz-title'),
+                html.P('좌/우 시간-주파수 분석. 4-12Hz 대역에 지속적 power → tremor 존재.',
+                       className='tab-description'),
+                dcc.Graph(id='tremor-spectral', config={'displayModeBar': False}),
+            ], className='viz-block'),
             dcc.Graph(id='tremor-raw-left', config={'displayModeBar': False}),
             dcc.Graph(id='tremor-raw-right', config={'displayModeBar': False}),
         ], className='raw-sensor-section'),
@@ -300,7 +322,6 @@ def build_tab_video():
                 ], className='video-cards-grid'),
             ], className='video-left'),
             html.Div([
-                dcc.Graph(id='motion-timeline', config={'displayModeBar': False}),
                 dcc.Graph(id='lr-tapping-comparison', config={'displayModeBar': False}),
             ], className='video-right'),
         ], className='video-split-layout'),

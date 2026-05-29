@@ -25,16 +25,17 @@ from src.feature_engineering import (
 )
 from src.figures import (
     make_timeseries_plot,
-    make_video_feature_timeline, make_video_lr_feature_comparison, summarize_video_task_metrics,
+    make_video_lr_feature_comparison, summarize_video_task_metrics,
     make_video_interval_distribution, make_video_tremor_spectrogram, make_video_symmetry_trend,
-    make_motion_timeline, make_lr_tapping_comparison,
+    make_lr_tapping_comparison,
     make_bilateral_matrix, make_spectral_fingerprint,
     make_rhythm_ladder,
     make_new_vs_group_box,
     make_proximity_gauge,
     make_summary_radar,
     make_tremor_power_bars, make_tremor_band_breakdown, make_amplitude_decrement,
-    _empty_fig,
+    make_asym_feature_bars, make_asym_group_compare,
+    _empty_fig, _interpret_proximity,
 )
 from src.layout import (
     create_layout, build_tab_overview, build_tab_comparison,
@@ -269,13 +270,16 @@ def update_dropdown_labels(decision_store):
     Output('ov-handedness', 'children'),
     Output('ov-bmi', 'children'),
     Output('ov-duration', 'children'),
+    Output('ov-phenotype', 'children'),
+    Output('ov-proximity', 'children'),
+    Output('ov-asymmetry', 'children'),
     Output('nms-content', 'children'),
     Output('bilateral-matrix', 'figure'),
     Input('patient-dropdown', 'value'),
     Input('decision-store', 'data'),
 )
 def update_overview(tulip_id, decision_store):
-    empty = ('', '—', '—', '—', '—', '—', '', _empty_fig())
+    empty = ('', '—', '—', '—', '—', '—', '—', '—', '—', '', _empty_fig())
     if not tulip_id:
         return empty
 
@@ -319,14 +323,42 @@ def update_overview(tulip_id, decision_store):
     # Matrix — aligned tasks only (default)
     fig_matrix = make_bilateral_matrix(feature_cache, tulip_id)
 
-    age_diag = r.get('age_at_diagnosis')
     if is_new:
-        duration = '0y'
+        duration = '—'
     else:
+        age_diag = r.get('age_at_diagnosis')
         duration = f"{r['age'] - age_diag}y" if age_diag and r['age'] else '—'
+
+    # Motor Phenotype Summary
+    import numpy as np_local
+    from src.data_loader import compute_proximity_scores
+
+    prox_all = compute_proximity_scores()
+    pat_prox = prox_all.get(tulip_id, {})
+    overall = pat_prox.get('score', 50.0)
+    d_pd = pat_prox.get('d_pd', 0)
+    d_healthy = pat_prox.get('d_healthy', 0)
+    interpretation, interp_color, _ = _interpret_proximity(overall, d_pd, d_healthy)
+
+    phenotype_display = html.Span(interpretation, style={'color': interp_color, 'fontWeight': '600'})
+    proximity_display = html.Span(f'{overall:.1f}%', style={'color': interp_color, 'fontWeight': '600'})
+
+    # Mean asymmetry (aligned tasks)
+    subj = feature_cache[feature_cache.tulip_id == tulip_id]
+    asym_vals = []
+    for task in MATCHING_TASKS:
+        td = subj[subj.task == task]
+        lv = td[td.wrist == 'L']['amplitude'].values
+        rv = td[td.wrist == 'R']['amplitude'].values
+        if len(lv) > 0 and len(rv) > 0:
+            asym_vals.append(calc_asymmetry_index(lv[0], rv[0]))
+    mean_asym = float(np_local.mean(asym_vals)) if asym_vals else 0
+    asym_color = '#e53e3e' if mean_asym > 0.3 else '#38a169'
+    asym_display = html.Span(f'{mean_asym:.3f}', style={'color': asym_color, 'fontWeight': '600'})
 
     return (demographics, str(r['age'] or '—'), r['gender'] or '—',
             r['handedness'] or '—', str(r['bmi'] or '—'), duration,
+            phenotype_display, proximity_display, asym_display,
             nms_content, fig_matrix)
 
 
@@ -347,13 +379,14 @@ def update_tremor_overview(tulip_id):
     Output('tremor-spectral', 'figure'),
     Output('tremor-rhythm', 'figure'),
     Output('tremor-decrement', 'figure'),
+    Output('asym-feature-bars', 'figure'),
     Output('tremor-raw-left', 'figure'),
     Output('tremor-raw-right', 'figure'),
     Input('patient-dropdown', 'value'),
     Input('tremor-task-dropdown', 'value'),
 )
 def update_tremor_detail(tulip_id, task):
-    empty = (_empty_fig(),) * 6
+    empty = (_empty_fig(),) * 7
     if not tulip_id or not task:
         return empty
 
@@ -361,6 +394,7 @@ def update_tremor_detail(tulip_id, task):
     fig_spectral = make_spectral_fingerprint(tulip_id, task)
     fig_rhythm = make_rhythm_ladder(tulip_id, task)
     fig_decrement = make_amplitude_decrement(tulip_id, task)
+    fig_asym_bars = make_asym_feature_bars(feature_cache, tulip_id, task)
 
     left_ts = load_timeseries(tulip_id, task, 'LeftWrist')
     right_ts = load_timeseries(tulip_id, task, 'RightWrist')
@@ -368,7 +402,19 @@ def update_tremor_detail(tulip_id, task):
     fig_l = make_timeseries_plot(left_ts, f'{task_label} — Left Wrist')
     fig_r = make_timeseries_plot(right_ts, f'{task_label} — Right Wrist')
 
-    return fig_band, fig_spectral, fig_rhythm, fig_decrement, fig_l, fig_r
+    return (fig_band, fig_spectral, fig_rhythm, fig_decrement,
+            fig_asym_bars, fig_l, fig_r)
+
+
+# ─── Tab 1: Asymmetry — Group comparison (patient-level, Overview tab) ───
+@app.callback(
+    Output('asym-group-compare', 'figure'),
+    Input('patient-dropdown', 'value'),
+)
+def update_asym_group(tulip_id):
+    if not tulip_id:
+        return _empty_fig()
+    return make_asym_group_compare(group_stats, tulip_id)
 
 
 # ─── Tab 4: Reference Comparison — Patient-level ───
@@ -428,7 +474,7 @@ def update_summary(tulip_id):
 
     from src.data_loader import compute_proximity_scores, MATCHING_FEATURES
     from src.feature_engineering import calc_asymmetry_index
-    from src.figures import _interpret_proximity, FEATURE_LABELS
+    from src.figures import FEATURE_LABELS
     import numpy as np_local
 
     # Proximity (already alignment-based: 16D from Entrainment+Relaxed)
@@ -590,7 +636,6 @@ def update_video_type_options(tulip_id):
 
 @app.callback(
     Output('video-player-container', 'children'),
-    Output('motion-timeline', 'figure'),
     Output('lr-tapping-comparison', 'figure'),
     Output('video-interval-distribution', 'figure'),
     Output('video-tremor-spectrogram', 'figure'),
@@ -616,7 +661,7 @@ def update_video(tulip_id, video_type, camera):
         lcv_label, rcv_label = 'L Interval CV', 'R Interval CV'
 
     if not tulip_id or not video_type or not camera:
-        return (html.P('Select video'), _empty_fig(), _empty_fig(), _empty_fig(), _empty_fig(), _empty_fig(),
+        return (html.P('Select video'), _empty_fig(), _empty_fig(), _empty_fig(), _empty_fig(),
                 left_label, right_label, lcv_label, rcv_label,
                 '—', '—', '—', '—')
 
@@ -625,7 +670,7 @@ def update_video(tulip_id, video_type, camera):
     if not video_url:
         return (html.P('이 환자의 영상이 아직 업로드되지 않았습니다.',
                         style={'color': '#718096', 'padding': '20px'}),
-                _empty_fig(), _empty_fig(), _empty_fig(), _empty_fig(), _empty_fig(),
+                _empty_fig(), _empty_fig(), _empty_fig(), _empty_fig(),
                 left_label, right_label, lcv_label, rcv_label,
                 '—', '—', '—', '—')
 
@@ -655,12 +700,10 @@ def update_video(tulip_id, video_type, camera):
             _empty_fig('feature 데이터 없음'),
             _empty_fig('feature 데이터 없음'),
             _empty_fig('feature 데이터 없음'),
-            _empty_fig('feature 데이터 없음'),
             left_label, right_label, lcv_label, rcv_label,
             '—', '—', '—', '—',
         )
 
-    fig_timeline = make_video_feature_timeline(primary_df, video_type, camera)
     fig_lr = make_video_lr_feature_comparison(primary_df, counterpart_df, video_type)
     fig_intervals = make_video_interval_distribution(primary_df, video_type)
     fig_spec = make_video_tremor_spectrogram(primary_df, video_type)
@@ -668,7 +711,7 @@ def update_video(tulip_id, video_type, camera):
     l_taps, r_taps, l_cv, r_cv = summarize_video_task_metrics(primary_df, counterpart_df, video_type)
 
     return (
-        player, fig_timeline, fig_lr, fig_intervals, fig_spec, fig_symmetry,
+        player, fig_lr, fig_intervals, fig_spec, fig_symmetry,
         left_label, right_label, lcv_label, rcv_label,
         l_taps, r_taps, l_cv, r_cv,
     )
