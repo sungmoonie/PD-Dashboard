@@ -320,7 +320,10 @@ def update_overview(tulip_id, decision_store):
     fig_matrix = make_bilateral_matrix(feature_cache, tulip_id)
 
     age_diag = r.get('age_at_diagnosis')
-    duration = f"{r['age'] - age_diag}y" if age_diag and r['age'] else '—'
+    if is_new:
+        duration = '0y'
+    else:
+        duration = f"{r['age'] - age_diag}y" if age_diag and r['age'] else '—'
 
     return (demographics, str(r['age'] or '—'), r['gender'] or '—',
             r['handedness'] or '—', str(r['bmi'] or '—'), duration,
