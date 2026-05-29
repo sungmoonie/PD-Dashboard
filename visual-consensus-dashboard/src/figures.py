@@ -2461,8 +2461,15 @@ def make_tremor_power_bars(feature_df, group_stats_df, tulip_id):
         h_mean = ref[ref.group == 'Healthy']['tremor_power'].mean() if not ref[ref.group == 'Healthy'].empty else 0
         p_mean = ref[ref.group == 'PD']['tremor_power'].mean() if not ref[ref.group == 'PD'].empty else 0
 
+        # Ensure positive values for log scale (replace 0 with small epsilon)
+        eps = 1e-8
+        l_tp_plot = max(l_tp, eps)
+        r_tp_plot = max(r_tp, eps)
+        h_mean_plot = max(h_mean, eps)
+        p_mean_plot = max(p_mean, eps)
+
         fig.add_trace(go.Bar(
-            x=['Left', 'Right'], y=[l_tp, r_tp],
+            x=['Left', 'Right'], y=[l_tp_plot, r_tp_plot],
             marker=dict(color=['#4299e1', '#fc8181']),
             name='Patient' if col_i == 1 else None,
             showlegend=(col_i == 1), legendgroup='patient',
@@ -2471,12 +2478,12 @@ def make_tremor_power_bars(feature_df, group_stats_df, tulip_id):
             hovertemplate='%{x}: %{y:.6f}<extra></extra>',
         ), row=1, col=col_i)
 
-        fig.add_hline(y=p_mean, line_dash='dash', line_color='#e53e3e',
-                      annotation_text=f'PD avg',
+        fig.add_hline(y=p_mean_plot, line_dash='dash', line_color='#e53e3e',
+                      annotation_text=f'PD avg ({p_mean:.5f})',
                       annotation_font=dict(size=9, color='#e53e3e'),
                       row=1, col=col_i)
-        fig.add_hline(y=h_mean, line_dash='dot', line_color='#38a169',
-                      annotation_text=f'Healthy avg',
+        fig.add_hline(y=h_mean_plot, line_dash='dot', line_color='#38a169',
+                      annotation_text=f'Healthy avg ({h_mean:.5f})',
                       annotation_font=dict(size=9, color='#38a169'),
                       row=1, col=col_i)
 
@@ -2485,7 +2492,8 @@ def make_tremor_power_bars(feature_df, group_stats_df, tulip_id):
                    font=dict(size=14)),
         legend=dict(orientation='h', y=-0.15),
     )
-    fig.update_yaxes(title_text='Tremor Power', gridcolor='#edf2f7', row=1, col=1)
+    fig.update_yaxes(title_text='Tremor Power', type='log', gridcolor='#edf2f7', row=1, col=1)
+    fig.update_yaxes(type='log', gridcolor='#edf2f7', row=1, col=2)
     return _apply_defaults(fig, height=400)
 
 
