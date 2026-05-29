@@ -20,7 +20,7 @@ _SUBJECT_TULIP = {
 }
 
 # New (unlabeled) cases — these are treated as "new patients" for review
-NEW_CASES = {'TULIP_001','TULIP_008', 'TULIP_014'}
+NEW_CASES = set()  # 비어있음 — 추후 한 명 지정 예정
 
 
 def get_group_label(tulip_id, condition):

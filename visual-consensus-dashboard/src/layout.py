@@ -13,6 +13,105 @@ from src.data_loader import (
     get_subject_list_hybrid, get_task_list, NEW_CASES
 )
 
+# ── UPDRS items (CSV order) ──
+UPDRS_ITEMS = [
+    'Facial expression',
+    'Finger tapping - Right hand', 'Finger tapping - Left hand',
+    'Hand movements - Right hand', 'Hand movements - Left hand',
+    'Pronation-supination - Right hand', 'Pronation-supination - Left hand',
+    'Toe tapping - Right foot', 'Toe tapping - Left foot',
+    'Leg agility - Right leg', 'Leg agility - Left leg',
+    'Arising from chair', 'Gait', 'Freezing of gait',
+    'Postural stability', 'Posture', 'Global spontaneity of movement',
+    'Postural tremor - Right hand', 'Postural tremor - Left hand',
+    'Kinetic tremor - Right hand', 'Kinetic tremor - Left hand',
+    'Rest tremor amplitude - RUE', 'Rest tremor amplitude - LUE',
+    'Rest tremor amplitude - RLE', 'Rest tremor amplitude - LLE',
+    'Rest tremor amplitude - Lip/jaw', 'Constancy of rest tremor',
+    'Dyskinesias', 'Hoehn and Yahr Stage', 'wholistic_decision',
+]
+
+# Task-based grouping — aligned tasks only (Entrainment=Toe Tapping, Relaxed=Resting)
+UPDRS_TASK_GROUPS = [
+    ('Toe Tapping (발 두드리기)', [7, 8]),
+    ('Rest Tremor (안정시 떨림)', [21, 22, 23, 24, 25, 26]),
+    ('Global Assessment (종합)', [27, 28, 29]),
+]
+
+# Short labels for sidebar display
+UPDRS_SHORT = {
+    0: 'Facial expression',
+    1: 'Finger tap - R', 2: 'Finger tap - L',
+    3: 'Hand mvmt - R', 4: 'Hand mvmt - L',
+    5: 'Pron-sup - R', 6: 'Pron-sup - L',
+    7: 'Right foot', 8: 'Left foot',
+    9: 'Right leg', 10: 'Left leg',
+    11: 'Arising chair', 12: 'Gait', 13: 'Freezing',
+    14: 'Post. stability', 15: 'Posture', 16: 'Global spont.',
+    17: 'Post. tremor - R', 18: 'Post. tremor - L',
+    19: 'Kinetic - R', 20: 'Kinetic - L',
+    21: 'RUE (우상지)', 22: 'LUE (좌상지)',
+    23: 'RLE (우하지)', 24: 'LLE (좌하지)',
+    25: 'Lip/jaw', 26: 'Constancy',
+    27: 'Dyskinesias', 28: 'H&Y Stage', 29: 'Diagnosis',
+}
+
+
+def _updrs_input(idx):
+    """Create the appropriate input for a UPDRS item."""
+    name = UPDRS_ITEMS[idx]
+    if name == 'Dyskinesias':
+        return dcc.RadioItems(
+            id={'type': 'updrs-score', 'index': idx},
+            options=[{'label': 'No', 'value': 'No'}, {'label': 'Yes', 'value': 'Yes'}],
+            value=None, inline=True, className='updrs-radio',
+            labelClassName='updrs-radio-label',
+        )
+    elif name == 'Hoehn and Yahr Stage':
+        return dcc.RadioItems(
+            id={'type': 'updrs-score', 'index': idx},
+            options=[{'label': str(i), 'value': i} for i in range(6)],
+            value=None, inline=True, className='updrs-radio',
+            labelClassName='updrs-radio-label',
+        )
+    elif name == 'wholistic_decision':
+        return dcc.RadioItems(
+            id={'type': 'updrs-score', 'index': idx},
+            options=[{'label': 'PD', 'value': 'PD'}, {'label': 'HT', 'value': 'HT'}],
+            value=None, inline=True, className='updrs-radio',
+            labelClassName='updrs-radio-label',
+        )
+    else:
+        return dcc.RadioItems(
+            id={'type': 'updrs-score', 'index': idx},
+            options=[{'label': str(i), 'value': i} for i in range(5)],
+            value=None, inline=True, className='updrs-radio',
+            labelClassName='updrs-radio-label',
+        )
+
+
+def _updrs_row(idx):
+    """Single UPDRS item row: label + radio."""
+    label = UPDRS_SHORT.get(idx, UPDRS_ITEMS[idx])
+    return html.Div([
+        html.Span(label, className='updrs-item-label'),
+        _updrs_input(idx),
+    ], className='updrs-item-row')
+
+
+def _build_updrs_form():
+    """Build task-grouped UPDRS scoring form."""
+    groups = []
+    for i, (group_name, indices) in enumerate(UPDRS_TASK_GROUPS):
+        items = [_updrs_row(idx) for idx in indices]
+        groups.append(
+            html.Details([
+                html.Summary(group_name, className='updrs-group-title'),
+                html.Div(items, className='updrs-group-items'),
+            ], open=(i < 2), className='updrs-group')
+        )
+    return html.Div(groups, className='updrs-form')
+
 
 def _card(card_id, label, initial='—', label_id=None):
     """Create a summary metric card."""
@@ -89,56 +188,21 @@ def create_layout():
 
                 html.Hr(className='sidebar-divider'),
 
-                # Decision form
+                # Decision form — UPDRS Task-based scoring
                 html.Div([
-                    html.H4('Your Assessment', className='section-title'),
-                    html.Label('Classification:', className='form-label'),
-                    dcc.RadioItems(
-                        id='decision-classification',
-                        options=[
-                            {'label': 'PD', 'value': 'PD'},
-                            {'label': 'Healthy Tremor', 'value': 'HT'},
-                            {'label': 'Uncertain', 'value': '?'},
-                        ],
-                        value=None,
-                        className='decision-radio',
-                        labelClassName='radio-label',
-                    ),
-                    html.Label('Confidence:', className='form-label'),
-                    dcc.Slider(
-                        id='decision-confidence',
-                        min=0, max=100, step=10, value=50,
-                        marks={0: '0%', 50: '50%', 100: '100%'},
-                        className='confidence-slider',
-                    ),
-                    html.Label('Evidence Tags:', className='form-label'),
-                    dcc.Checklist(
-                        id='evidence-tags',
-                        options=[
-                            {'label': 'Tremor asymmetry', 'value': 'tremor_asym'},
-                            {'label': 'Rhythm instability', 'value': 'rhythm_instab'},
-                            {'label': 'Bradykinesia', 'value': 'bradykinesia'},
-                            {'label': 'Rest tremor', 'value': 'rest_tremor'},
-                            {'label': 'Action tremor', 'value': 'action_tremor'},
-                            {'label': 'High jerk', 'value': 'high_jerk'},
-                        ],
-                        value=[],
-                        className='evidence-checklist',
-                        labelClassName='check-label',
-                    ),
-                    html.Label('Notes:', className='form-label'),
-                    dcc.Textarea(
-                        id='decision-notes',
-                        placeholder='Clinical reasoning...',
-                        className='decision-textarea',
-                    ),
+                    html.H4('UPDRS Motor Assessment', className='section-title'),
+                    html.P('각 항목을 0-4점으로 평가해주세요.',
+                           style={'fontSize': '11px', 'color': '#718096',
+                                  'marginBottom': '8px'}),
+                    _build_updrs_form(),
                     html.Div([
                         html.Button('Save Decision', id='save-decision-btn',
                                     className='btn-primary', n_clicks=0),
-                        html.Button('Reset Diagnosis', id='reset-decision-btn',
+                        html.Button('Reset', id='reset-decision-btn',
                                     className='btn-reset', n_clicks=0),
                     ], className='decision-btn-row'),
                     html.Div(id='save-feedback', className='save-feedback'),
+                    html.Div(id='clinician-comparison'),
                 ], id='decision-form-container', className='decision-form'),
 
                 # Export

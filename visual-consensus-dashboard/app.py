@@ -8,7 +8,7 @@ Aligned Tasks Focus: Toe Tapping (Entrainment) & Resting (Relaxed)
 import os
 import json
 import dash
-from dash import Input, Output, State, html, dcc, callback_context
+from dash import Input, Output, State, html, dcc, callback_context, ALL
 from flask import send_file, request, Response, redirect
 
 # ─── Data Loading ───
@@ -40,7 +40,7 @@ from src.figures import (
 from src.layout import (
     create_layout, build_tab_overview, build_tab_comparison,
     build_tab_tremor, build_tab_video,
-    build_tab_summary,
+    build_tab_summary, UPDRS_ITEMS,
 )
 
 # ─── Pre-load Data ───
@@ -161,15 +161,15 @@ def update_case_info(tulip_id, decision_store):
     decision_store = decision_store or {}
     saved = decision_store.get(tulip_id)
 
-    has_decision = is_new and saved and saved.get('classification')
+    saved_dx = saved.get('wholistic_decision') if saved else None
+    has_decision = is_new and saved_dx is not None
 
     # Badge
     if has_decision:
-        cls = saved['classification']
-        badge_text, badge_class = _CLASSIFICATION_LABELS.get(cls, (cls, 'badge badge-other'))
+        badge_text, badge_class = _CLASSIFICATION_LABELS.get(saved_dx, (saved_dx, 'badge badge-other'))
         badge_text = f'Dx: {badge_text}'
     elif is_new:
-        badge_text = '★ NEW'
+        badge_text = 'NEW'
         badge_class = 'badge badge-new'
     else:
         condition = row.iloc[0]['condition'] if not row.empty else 'Unknown'
@@ -180,12 +180,11 @@ def update_case_info(tulip_id, decision_store):
     # Info cards
     condition = row.iloc[0]['condition'] if not row.empty else '—'
     if has_decision:
-        cls = saved['classification']
-        label, _ = _CLASSIFICATION_LABELS.get(cls, (cls, ''))
-        conf = saved.get('confidence', 0)
+        label, _ = _CLASSIFICATION_LABELS.get(saved_dx, (saved_dx, ''))
+        n_scored = len(saved.get('updrs_scores', {}))
         condition = html.Div([
             html.Div(label, className='card-value-main', style={'color': '#2b6cb0'}),
-            html.Div(f'(Confidence {conf}%)', className='card-value-sub'),
+            html.Div(f'({n_scored} items scored)', className='card-value-sub'),
         ])
     elif is_new:
         condition = html.Div([
@@ -196,10 +195,9 @@ def update_case_info(tulip_id, decision_store):
     hy = str(meta.get('hy_mean', '—'))
     diag = meta.get('diagnosis', '—')
     if has_decision:
-        cls = saved['classification']
-        label, _ = _CLASSIFICATION_LABELS.get(cls, (cls, ''))
+        label, _ = _CLASSIFICATION_LABELS.get(saved_dx, (saved_dx, ''))
         diag = html.Div([
-            html.Div(f'Clinician: {label}', className='card-value-main',
+            html.Div(f'Your Dx: {label}', className='card-value-main',
                      style={'color': '#2b6cb0', 'fontSize': '13px'}),
         ])
     elif is_new:
@@ -212,20 +210,17 @@ def update_case_info(tulip_id, decision_store):
     # New patient indicator
     indicator = ''
     if has_decision:
-        cls = saved['classification']
-        label, _ = _CLASSIFICATION_LABELS.get(cls, (cls, ''))
-        tags = ', '.join(saved.get('evidence_tags', [])) or '없음'
+        label, _ = _CLASSIFICATION_LABELS.get(saved_dx, (saved_dx, ''))
+        n_scored = len(saved.get('updrs_scores', {}))
         indicator = html.Div([
-            html.Span('✓ ', style={'fontSize': '16px'}),
-            html.Span(f'진단 저장됨: {label} (Confidence {saved.get("confidence", 0)}%)'),
-            html.Br(),
-            html.Span(f'Evidence: {tags}', style={'fontSize': '11px', 'color': '#718096'}),
-        ], className='new-case-alert', style={'background': '#f0fff4', 'borderColor': '#9ae6b4', 'color': '#276749'})
+            html.Span('Saved: ', style={'fontWeight': '600'}),
+            html.Span(f'{label} ({n_scored} items)'),
+        ], className='new-case-alert',
+           style={'background': '#f0fff4', 'borderColor': '#9ae6b4', 'color': '#276749'})
     elif is_new:
         indicator = html.Div([
-            html.Span('★ ', className='new-star'),
-            html.Span('이 환자는 미확정 New Case입니다. '),
-            html.Span('아래에서 PD/HT/? 판단을 내려주세요.'),
+            html.Span('NEW CASE: '),
+            html.Span('UPDRS 항목을 평가한 후 Save Decision을 눌러주세요.'),
         ], className='new-case-alert')
 
     return badge_text, badge_class, condition, hy, diag, nms_count, indicator
@@ -246,13 +241,13 @@ def update_dropdown_labels(decision_store):
         num = tid.replace('TULIP_', '')
         group = get_group_label(tid, row['condition'])
         saved = decision_store.get(tid)
-        if group == 'New' and saved and saved.get('classification'):
-            cls = saved['classification']
-            label_txt = _CLASSIFICATION_LABELS.get(cls, (cls, ''))[0]
-            label = f"✓ Patient_{num} — Dx:{label_txt} ({row['age']}y, {row['gender']})"
+        saved_dx = saved.get('wholistic_decision') if saved else None
+        if group == 'New' and saved_dx:
+            label_txt = _CLASSIFICATION_LABELS.get(saved_dx, (saved_dx, ''))[0]
+            label = f"Dx:{label_txt} Patient_{num} ({row['age']}y, {row['gender']})"
             new_options.append({'label': label, 'value': tid})
         elif group == 'New':
-            label = f"★ Patient_{num} — New ({row['age']}y, {row['gender']})"
+            label = f"NEW Patient_{num} ({row['age']}y, {row['gender']})"
             new_options.append({'label': label, 'value': tid})
         else:
             label = f"  Patient_{num} — {group} ({row['age']}y, {row['gender']})"
@@ -291,12 +286,13 @@ def update_overview(tulip_id, decision_store):
     is_new = tulip_id in NEW_CASES
     decision_store = decision_store or {}
     saved = decision_store.get(tulip_id)
-    has_decision = is_new and saved and saved.get('classification')
+    saved_dx = saved.get('wholistic_decision') if saved else None
+    has_decision = is_new and saved_dx is not None
 
     if has_decision:
-        cls = saved['classification']
-        label_txt = _CLASSIFICATION_LABELS.get(cls, (cls, ''))[0]
-        cond_display = f'Dx: {label_txt} (Confidence {saved.get("confidence", 0)}%)'
+        label_txt = _CLASSIFICATION_LABELS.get(saved_dx, (saved_dx, ''))[0]
+        n_scored = len(saved.get('updrs_scores', {}))
+        cond_display = f'Dx: {label_txt} ({n_scored} items scored)'
     elif is_new:
         cond_display = '★ New Case (미확정)'
     else:
@@ -717,43 +713,134 @@ def update_video(tulip_id, video_type, camera):
     )
 
 
-# ─── Decision Save / Reset ───
+# ─── Decision Save / Reset (UPDRS-based) ───
 @app.callback(
     Output('decision-store', 'data'),
     Output('save-feedback', 'children'),
+    Output('clinician-comparison', 'children'),
     Input('save-decision-btn', 'n_clicks'),
     Input('reset-decision-btn', 'n_clicks'),
+    State({'type': 'updrs-score', 'index': ALL}, 'value'),
     State('patient-dropdown', 'value'),
-    State('decision-classification', 'value'),
-    State('decision-confidence', 'value'),
-    State('evidence-tags', 'value'),
-    State('decision-notes', 'value'),
     State('decision-store', 'data'),
 )
-def save_or_reset_decision(save_clicks, reset_clicks, tulip_id,
-                           classification, confidence, tags, notes, store):
+def save_or_reset_decision(save_clicks, reset_clicks, updrs_values,
+                           tulip_id, store):
     store = store or {}
     if not tulip_id:
-        return store, ''
+        return store, '', ''
 
     triggered = callback_context.triggered_id
     if triggered == 'reset-decision-btn' and reset_clicks:
         store.pop(tulip_id, None)
-        return store, html.Span('↩ 진단 초기화됨', className='feedback-reset')
+        return store, html.Span('Reset', className='feedback-reset'), ''
 
     if triggered == 'save-decision-btn' and save_clicks:
-        if not classification:
-            return store, html.Span('분류를 선택해주세요', className='feedback-warn')
-        store[tulip_id] = {
-            'classification': classification,
-            'confidence': confidence,
-            'evidence_tags': tags or [],
-            'notes': notes or '',
-        }
-        label = _CLASSIFICATION_LABELS.get(classification, (classification, ''))[0]
-        return store, html.Span(f'✓ Saved: {label} ({confidence}%)', className='feedback-success')
+        # Collect user's scores (skip None)
+        user_scores = {}
+        for i, val in enumerate(updrs_values):
+            if val is not None:
+                user_scores[UPDRS_ITEMS[i]] = val
 
-    return store, ''
+        if not user_scores:
+            return store, html.Span('최소 1개 항목을 평가해주세요',
+                                    className='feedback-warn'), ''
+
+        wholistic = user_scores.get('wholistic_decision')
+        store[tulip_id] = {
+            'updrs_scores': user_scores,
+            'wholistic_decision': wholistic,
+        }
+
+        comparison = _build_clinician_comparison(tulip_id, user_scores)
+        feedback = html.Span(f'Saved ({len(user_scores)} items)',
+                             className='feedback-success')
+        return store, feedback, comparison
+
+    return store, '', ''
+
+
+def _build_clinician_comparison(tulip_id, user_scores):
+    """Build comparison table: user vs 3 clinicians + majority vote."""
+    from collections import Counter
+
+    pat_labels = labels_df[labels_df.tulip_id == tulip_id]
+    if pat_labels.empty:
+        return html.P('이 환자의 clinician label 데이터가 없습니다.',
+                      style={'color': '#718096', 'fontSize': '12px'})
+
+    rows = []
+    agree_count = 0
+    total_compared = 0
+
+    for name in UPDRS_ITEMS:
+        if name not in user_scores:
+            continue
+
+        label_row = pat_labels[pat_labels.updrs_name == name]
+        if label_row.empty:
+            continue
+
+        lr = label_row.iloc[0]
+        c1, c2, c3 = lr['c1'], lr['c2'], lr['c3']
+        user_val = user_scores[name]
+
+        # Majority vote
+        if lr['is_numeric']:
+            vals = [int(float(v)) for v in [c1, c2, c3]]
+            majority = Counter(vals).most_common(1)[0][0]
+        else:
+            vals = [str(v) for v in [c1, c2, c3]]
+            majority = Counter(vals).most_common(1)[0][0]
+
+        # Check agreement
+        total_compared += 1
+        if str(user_val) == str(majority):
+            agree_count += 1
+            row_class = 'comparison-agree'
+        else:
+            row_class = 'comparison-disagree'
+
+        def fmt(v):
+            try:
+                fv = float(v)
+                return str(int(fv)) if fv == int(fv) else str(v)
+            except (ValueError, TypeError):
+                return str(v)
+
+        rows.append(html.Tr([
+            html.Td(name, className='comp-item-name'),
+            html.Td(str(user_val), className='comp-cell comp-you'),
+            html.Td(fmt(c1), className='comp-cell'),
+            html.Td(fmt(c2), className='comp-cell'),
+            html.Td(fmt(c3), className='comp-cell'),
+            html.Td(str(majority), className='comp-cell comp-majority'),
+        ], className=row_class))
+
+    if not rows:
+        return html.P('비교할 데이터가 없습니다.', style={'color': '#718096'})
+
+    agree_pct = (agree_count / total_compared * 100) if total_compared > 0 else 0
+
+    return html.Div([
+        html.Hr(className='sidebar-divider'),
+        html.H4('Clinician Comparison', className='section-title',
+                style={'marginTop': '12px'}),
+        html.P(f'Agreement with majority: {agree_count}/{total_compared} '
+               f'({agree_pct:.0f}%)',
+               style={'fontSize': '12px', 'color': '#4a5568', 'marginBottom': '8px',
+                      'fontWeight': '600'}),
+        html.Div([
+            html.Table([
+                html.Thead(html.Tr([
+                    html.Th('Item'), html.Th('You'),
+                    html.Th('C1'), html.Th('C2'), html.Th('C3'),
+                    html.Th('Majority'),
+                ], className='comp-header')),
+                html.Tbody(rows),
+            ], className='comparison-table'),
+        ], className='comparison-scroll'),
+    ])
 
 
 # ─── Export JSON ───
