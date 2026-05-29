@@ -497,13 +497,16 @@ def compute_proximity_scores():
     if not subject_vectors:
         return {}
 
-    # Confirmed groups
+    # Confirmed groups — with tid tracking for leave-one-out
+    pd_tid_list, healthy_tid_list = [], []
     pd_vecs, healthy_vecs = [], []
     for tid, vec in subject_vectors.items():
         group = get_group_label(tid, cond_map.get(tid, 'Unknown'))
         if group == 'PD':
+            pd_tid_list.append(tid)
             pd_vecs.append(vec)
         elif group == 'Healthy':
+            healthy_tid_list.append(tid)
             healthy_vecs.append(vec)
 
     n_pd = len(pd_vecs)
@@ -520,20 +523,38 @@ def compute_proximity_scores():
     std_vec = np.std(all_confirmed, axis=0)
     std_vec[std_vec == 0] = 1.0
 
-    pd_centroid = np.mean((pd_vecs - mean_vec) / std_vec, axis=0)
-    healthy_centroid = np.mean((healthy_vecs - mean_vec) / std_vec, axis=0)
+    # Z-normalize all confirmed vectors
+    pd_z = (pd_vecs - mean_vec) / std_vec
+    healthy_z = (healthy_vecs - mean_vec) / std_vec
+
+    pd_centroid = np.mean(pd_z, axis=0)
+    healthy_centroid = np.mean(healthy_z, axis=0)
 
     results = {}
     for tid, vec in subject_vectors.items():
         z_vec = (vec - mean_vec) / std_vec
+        group = get_group_label(tid, cond_map.get(tid, 'Unknown'))
 
-        # Weighted Euclidean distance (Revision 3)
-        d_pd = _weighted_euclidean(z_vec, pd_centroid, weight_vector)
-        d_healthy = _weighted_euclidean(z_vec, healthy_centroid, weight_vector)
+        # Leave-one-out: exclude this patient from its own group centroid
+        # Prevents confirmed patients from scoring trivially close to own group
+        if group == 'PD' and n_pd > 1:
+            mask = [t != tid for t in pd_tid_list]
+            loo_centroid = np.mean(pd_z[mask], axis=0)
+            d_pd = _weighted_euclidean(z_vec, loo_centroid, weight_vector)
+        else:
+            d_pd = _weighted_euclidean(z_vec, pd_centroid, weight_vector)
+
+        if group == 'Healthy' and n_healthy > 1:
+            mask = [t != tid for t in healthy_tid_list]
+            loo_centroid = np.mean(healthy_z[mask], axis=0)
+            d_healthy = _weighted_euclidean(z_vec, loo_centroid, weight_vector)
+        else:
+            d_healthy = _weighted_euclidean(z_vec, healthy_centroid, weight_vector)
+
         total_d = d_pd + d_healthy
         score = (d_healthy / total_d * 100) if total_d > 0 else 50.0
 
-        # Per-task breakdown
+        # Per-task breakdown (uses full centroids — LOO is overall score only)
         per_task = {}
         idx = 0
         for task in MATCHING_TASKS:

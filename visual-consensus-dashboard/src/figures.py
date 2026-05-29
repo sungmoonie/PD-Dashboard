@@ -1690,16 +1690,22 @@ GROUP_COLORS_EXT = {
 
 
 def _interpret_proximity(score, d_pd, d_healthy):
-    """Interpret proximity as ambiguous zone vs directional."""
-    diff_ratio = abs(d_pd - d_healthy) / ((d_pd + d_healthy) / 2) if (d_pd + d_healthy) > 0 else 0
-    if diff_ratio < 0.15:
-        return 'Ambiguous proximity zone (equidistant)', '#805ad5', 'ambiguous'
-    elif score > 65:
+    """Interpret proximity score — based on relative distance to PD/Healthy centroids.
+
+    score = d_healthy / (d_pd + d_healthy) × 100
+      → high score = far from Healthy = PD-like motor pattern
+      → low score  = close to Healthy = Healthy-like motor pattern
+
+    Thresholds calibrated for small reference cohorts (n < 10).
+    """
+    if score > 55:
         return 'PD-like motor phenotype', '#e53e3e', 'pd_like'
-    elif score < 35:
+    elif score < 20:
         return 'Healthy-like motor phenotype', '#38a169', 'healthy_like'
-    elif score > 50:
+    elif score > 45:
         return 'Mildly PD-leaning phenotype', '#dd6b20', 'mild_pd'
+    elif score > 30:
+        return 'Borderline phenotype', '#805ad5', 'borderline'
     else:
         return 'Mildly Healthy-leaning phenotype', '#68d391', 'mild_healthy'
 
