@@ -1,7 +1,8 @@
 """
-PD Clinical Decision Support Dashboard
-========================================
-Hybrid layout: Tabs + Decision Workspace + New vs Confirmed Group Comparison
+PD Clinical Decision Support Dashboard — Final Version
+========================================================
+Aligned Tasks Focus: Toe Tapping (Entrainment) & Resting (Relaxed)
+5 Tabs: Overview, Tremor & Rhythm, Video, Reference Comparison, Summary
 """
 
 import os
@@ -15,7 +16,8 @@ from src.data_loader import (
     load_patients, load_nms, load_updrs_labels, load_updrs_metadata,
     build_group_stats, build_feature_cache,
     load_timeseries, get_subject_list_hybrid,
-    SENSOR_TASKS, TASK_LABELS_KR, NEW_CASES, get_group_label, _estimate_fs,
+    SENSOR_TASKS, MATCHING_TASKS, TASK_LABELS_KR, NEW_CASES,
+    get_group_label, _estimate_fs,
     load_video_feature_df, VIDEO_TASK_FOLDER_MAP, load_video_analysis,
 )
 from src.feature_engineering import (
@@ -27,20 +29,17 @@ from src.figures import (
     make_video_interval_distribution, make_video_tremor_spectrogram, make_video_symmetry_trend,
     make_motion_timeline, make_lr_tapping_comparison,
     make_bilateral_matrix, make_spectral_fingerprint,
-    make_rhythm_ladder, make_evidence_ribbon,
-    make_new_vs_group_box, make_group_feature_comparison,
-    make_task_profile_comparison, make_asymmetry_scatter,
+    make_rhythm_ladder,
+    make_new_vs_group_box,
     make_proximity_gauge,
-    make_asymmetry_heatmap, make_asym_waveform,
-    make_asym_feature_bars, make_asym_group_compare,
     make_summary_radar,
-    make_motor_landscape, make_bilateral_phase_space,
+    make_tremor_power_bars, make_tremor_band_breakdown, make_amplitude_decrement,
     _empty_fig,
 )
 from src.layout import (
     create_layout, build_tab_overview, build_tab_comparison,
-    build_tab_sensor, build_tab_video, build_tab_landscape,
-    build_tab_asymmetry, build_tab_summary,
+    build_tab_tremor, build_tab_video,
+    build_tab_summary,
 )
 
 # ─── Pre-load Data ───
@@ -48,7 +47,6 @@ patients_df = load_patients()
 nms_data = load_nms()
 labels_df = load_updrs_labels()
 updrs_meta = load_updrs_metadata()
-# [PRE] Legacy JSON video analysis preload kept for compatibility reference.
 video_data = load_video_analysis()
 group_stats = build_group_stats()
 feature_cache = build_feature_cache()
@@ -70,8 +68,6 @@ app.layout = create_layout()
 
 R2_BASE = 'https://pub-5e7cb79a175143fd80bb9497eeaa4e41.r2.dev'
 
-# R2 folder mapping: (tulip_id, video_type) → R2 folder key
-# video_type values match dropdown: 'toe_left', 'toe_right', 'resting'
 R2_VIDEO_CATALOG = {
     'TULIP_001': {
         'toe_left': 'TULIP_001_17. Toe_tapping_left',
@@ -104,7 +100,7 @@ def _r2_video_url(tulip_id, video_type, camera):
 
 # ══════════════════════════════════════════════════════════════
 #  CALLBACKS
-# ═══════════════════════════════════════════════════════��══════
+# ══════════════════════════════════════════════════════════════
 
 # ─── Tab Rendering ───
 @app.callback(
@@ -114,14 +110,10 @@ def _r2_video_url(tulip_id, video_type, camera):
 def render_tab(tab):
     if tab == 'tab-overview':
         return build_tab_overview()
-    elif tab == 'tab-landscape':
-        return build_tab_landscape()
+    elif tab == 'tab-tremor':
+        return build_tab_tremor()
     elif tab == 'tab-comparison':
         return build_tab_comparison()
-    elif tab == 'tab-asymmetry':
-        return build_tab_asymmetry()
-    elif tab == 'tab-sensor':
-        return build_tab_sensor()
     elif tab == 'tab-video':
         return build_tab_video()
     elif tab == 'tab-summary':
@@ -136,9 +128,6 @@ def render_tab(tab):
     Input('main-tabs', 'value'),
 )
 def toggle_right_panel(tab):
-    # [PRE] Previously, tab-video hid the right panel:
-    # if tab == 'tab-video':
-    #     return {'display': 'none'}, {'gridTemplateColumns': '1fr'}
     return {}, {}
 
 
@@ -171,7 +160,6 @@ def update_case_info(tulip_id, decision_store):
     decision_store = decision_store or {}
     saved = decision_store.get(tulip_id)
 
-    # Check if doctor already saved a decision for this new patient
     has_decision = is_new and saved and saved.get('classification')
 
     # Badge
@@ -250,7 +238,8 @@ def update_case_info(tulip_id, decision_store):
 def update_dropdown_labels(decision_store):
     """Update dropdown labels to reflect saved diagnoses."""
     decision_store = decision_store or {}
-    options = []
+    new_options = []
+    confirmed_options = []
     for _, row in patients_df.iterrows():
         tid = row['tulip_id']
         num = tid.replace('TULIP_', '')
@@ -260,12 +249,16 @@ def update_dropdown_labels(decision_store):
             cls = saved['classification']
             label_txt = _CLASSIFICATION_LABELS.get(cls, (cls, ''))[0]
             label = f"✓ Patient_{num} — Dx:{label_txt} ({row['age']}y, {row['gender']})"
+            new_options.append({'label': label, 'value': tid})
         elif group == 'New':
             label = f"★ Patient_{num} — New ({row['age']}y, {row['gender']})"
+            new_options.append({'label': label, 'value': tid})
         else:
             label = f"  Patient_{num} — {group} ({row['age']}y, {row['gender']})"
-        options.append({'label': label, 'value': tid})
-    return options
+            confirmed_options.append({'label': label, 'value': tid})
+    new_options.sort(key=lambda x: x['value'])
+    confirmed_options.sort(key=lambda x: x['value'])
+    return new_options + confirmed_options
 
 
 # ─── Tab 1: Patient Overview ───
@@ -323,7 +316,7 @@ def update_overview(tulip_id, decision_store):
         ], className='nms-list') if symptoms else html.P('No NMS reported')
     ])
 
-    # Matrix
+    # Matrix — aligned tasks only (default)
     fig_matrix = make_bilateral_matrix(feature_cache, tulip_id)
 
     age_diag = r.get('age_at_diagnosis')
@@ -334,38 +327,59 @@ def update_overview(tulip_id, decision_store):
             nms_content, fig_matrix)
 
 
-# ─── Tab 2: Motor Landscape ───
+# ─── Tab 2: Tremor & Rhythm — Overview (patient-level) ───
 @app.callback(
-    Output('motor-landscape', 'figure'),
-    Output('bilateral-phase-space', 'figure'),
+    Output('tremor-power-bars', 'figure'),
     Input('patient-dropdown', 'value'),
-    Input('landscape-task-dropdown', 'value'),
 )
-def update_landscape(tulip_id, task):
+def update_tremor_overview(tulip_id):
+    if not tulip_id:
+        return _empty_fig()
+    return make_tremor_power_bars(feature_cache, group_stats, tulip_id)
+
+
+# ─── Tab 2: Tremor & Rhythm — Detail (task-specific) ───
+@app.callback(
+    Output('tremor-band-chart', 'figure'),
+    Output('tremor-spectral', 'figure'),
+    Output('tremor-rhythm', 'figure'),
+    Output('tremor-decrement', 'figure'),
+    Output('tremor-raw-left', 'figure'),
+    Output('tremor-raw-right', 'figure'),
+    Input('patient-dropdown', 'value'),
+    Input('tremor-task-dropdown', 'value'),
+)
+def update_tremor_detail(tulip_id, task):
+    empty = (_empty_fig(),) * 6
     if not tulip_id or not task:
-        return _empty_fig(), _empty_fig()
-    fig_landscape = make_motor_landscape(tulip_id, task)
-    fig_phase = make_bilateral_phase_space(tulip_id, task)
-    return fig_landscape, fig_phase
+        return empty
+
+    fig_band = make_tremor_band_breakdown(tulip_id, task)
+    fig_spectral = make_spectral_fingerprint(tulip_id, task)
+    fig_rhythm = make_rhythm_ladder(tulip_id, task)
+    fig_decrement = make_amplitude_decrement(tulip_id, task)
+
+    left_ts = load_timeseries(tulip_id, task, 'LeftWrist')
+    right_ts = load_timeseries(tulip_id, task, 'RightWrist')
+    task_label = TASK_LABELS_KR.get(task, task)
+    fig_l = make_timeseries_plot(left_ts, f'{task_label} — Left Wrist')
+    fig_r = make_timeseries_plot(right_ts, f'{task_label} — Right Wrist')
+
+    return fig_band, fig_spectral, fig_rhythm, fig_decrement, fig_l, fig_r
 
 
-# ─── Tab 3: Group Comparison (patient-level, no task) ───
+# ─── Tab 4: Reference Comparison — Patient-level ───
 @app.callback(
     Output('proximity-gauge', 'figure'),
-    Output('task-profile-comparison', 'figure'),
-    Output('feature-group-comparison', 'figure'),
     Input('patient-dropdown', 'value'),
 )
 def update_comparison_patient(tulip_id):
     if not tulip_id:
-        return (_empty_fig(),) * 3
-    fig_gauge = make_proximity_gauge(group_stats, feature_cache, tulip_id)
-    fig_profile = make_task_profile_comparison(group_stats, tulip_id)
-    fig_features = make_group_feature_comparison(feature_cache, group_stats, tulip_id)
-    return fig_gauge, fig_profile, fig_features
+        return _empty_fig()
+    return make_proximity_gauge(group_stats, feature_cache, tulip_id)
 
 
-# ─── Tab 3: Group Comparison — auto-select metric by task ───
+# ─── Tab 4: Reference Comparison — auto-select metric by task ───
 _TASK_RECOMMENDED_METRIC = {
     'Relaxed': 'accel_rms', 'RelaxedTask': 'accel_rms',
     'Entrainment': 'gyro_rms', 'TouchIndex': 'gyro_rms',
@@ -384,79 +398,20 @@ def auto_select_metric(task):
     return _TASK_RECOMMENDED_METRIC.get(task, 'accel_rms')
 
 
-# ─── Tab 3: Group Comparison (task-specific) ───
+# ─── Tab 4: Reference Comparison — Task-specific ───
 @app.callback(
     Output('new-vs-group-box', 'figure'),
-    Output('asymmetry-scatter', 'figure'),
     Input('patient-dropdown', 'value'),
     Input('comp-task-dropdown', 'value'),
     Input('comp-metric-dropdown', 'value'),
 )
 def update_comparison_task(tulip_id, task, metric):
     if not tulip_id or not task:
-        return _empty_fig(), _empty_fig()
-    fig_box = make_new_vs_group_box(group_stats, task, metric, tulip_id)
-    fig_asym = make_asymmetry_scatter(group_stats, task, tulip_id)
-    return fig_box, fig_asym
+        return _empty_fig()
+    return make_new_vs_group_box(group_stats, task, metric, tulip_id)
 
 
-# ─── Tab 3: Sensor Analysis ───
-@app.callback(
-    Output('spectral-fingerprint', 'figure'),
-    Output('rhythm-ladder', 'figure'),
-    Output('evidence-ribbon', 'figure'),
-    Output('raw-timeseries-left', 'figure'),
-    Output('raw-timeseries-right', 'figure'),
-    Input('patient-dropdown', 'value'),
-    Input('sensor-task-dropdown', 'value'),
-)
-def update_sensor(tulip_id, task):
-    empty = (_empty_fig(),) * 5
-    if not tulip_id or not task:
-        return empty
-
-    fig_spectral = make_spectral_fingerprint(tulip_id, task)
-    fig_rhythm = make_rhythm_ladder(tulip_id, task)
-    fig_ribbon = make_evidence_ribbon(feature_cache, tulip_id)
-
-    left_ts = load_timeseries(tulip_id, task, 'LeftWrist')
-    right_ts = load_timeseries(tulip_id, task, 'RightWrist')
-    task_label = TASK_LABELS_KR.get(task, task)
-    fig_l = make_timeseries_plot(left_ts, f'{task_label} — Left Wrist')
-    fig_r = make_timeseries_plot(right_ts, f'{task_label} — Right Wrist')
-
-    return fig_spectral, fig_rhythm, fig_ribbon, fig_l, fig_r
-
-
-# ─── Tab 3: Bilateral Asymmetry ───
-@app.callback(
-    Output('asymmetry-heatmap', 'figure'),
-    Output('asym-group-compare', 'figure'),
-    Input('patient-dropdown', 'value'),
-)
-def update_asymmetry_overview(tulip_id):
-    if not tulip_id:
-        return _empty_fig(), _empty_fig()
-    fig_heatmap = make_asymmetry_heatmap(feature_cache, group_stats, tulip_id)
-    fig_group = make_asym_group_compare(group_stats, tulip_id)
-    return fig_heatmap, fig_group
-
-
-@app.callback(
-    Output('asym-waveform', 'figure'),
-    Output('asym-feature-bars', 'figure'),
-    Input('patient-dropdown', 'value'),
-    Input('asym-task-dropdown', 'value'),
-)
-def update_asymmetry_detail(tulip_id, task):
-    if not tulip_id or not task:
-        return _empty_fig(), _empty_fig()
-    fig_wave = make_asym_waveform(tulip_id, task)
-    fig_bars = make_asym_feature_bars(feature_cache, tulip_id, task)
-    return fig_wave, fig_bars
-
-
-# ─── Tab 6: Clinical Summary ───
+# ─── Tab 5: Clinical Summary (aligned tasks only) ───
 @app.callback(
     Output('summary-verdict', 'children'),
     Output('summary-findings', 'children'),
@@ -470,10 +425,10 @@ def update_summary(tulip_id):
 
     from src.data_loader import compute_proximity_scores, MATCHING_FEATURES
     from src.feature_engineering import calc_asymmetry_index
-    from src.figures import _interpret_proximity
+    from src.figures import _interpret_proximity, FEATURE_LABELS
     import numpy as np_local
 
-    # Use matching-aligned proximity (16D weighted Euclidean)
+    # Proximity (already alignment-based: 16D from Entrainment+Relaxed)
     prox_all = compute_proximity_scores()
     pat_prox = prox_all.get(tulip_id, {})
     overall = pat_prox.get('score', 50.0)
@@ -482,7 +437,7 @@ def update_summary(tulip_id):
     d_healthy = pat_prox.get('d_healthy', 0)
     n_pd = pat_prox.get('n_pd', 0)
     n_healthy = pat_prox.get('n_healthy', 0)
-    # Flatten per_task into per_feature for findings
+
     per_feature = {}
     for task_feats in per_task.values():
         for feat, score in task_feats.items():
@@ -491,10 +446,10 @@ def update_summary(tulip_id):
             per_feature[feat].append(score)
     per_feature = {f: np_local.mean(v) for f, v in per_feature.items()}
 
-    # Asymmetry score
+    # Asymmetry score (aligned tasks only)
     subj = feature_cache[feature_cache.tulip_id == tulip_id]
     asym_vals = []
-    for task in SENSOR_TASKS:
+    for task in MATCHING_TASKS:
         td = subj[subj.task == task]
         lv = td[td.wrist == 'L']['amplitude'].values
         rv = td[td.wrist == 'R']['amplitude'].values
@@ -518,8 +473,7 @@ def update_summary(tulip_id):
             html.P(f'd(PD)={d_pd:.2f}, d(Healthy)={d_healthy:.2f}',
                    style={'fontSize': '12px', 'color': '#718096'}),
             html.P('Method: 16D bilateral feature vector (Entrainment+Relaxed × L/R × 4 features), '
-                   'z-score normalized, weighted Euclidean distance to reference centroids. '
-                   'This measures phenotype similarity, NOT diagnostic probability.',
+                   'z-score normalized, weighted Euclidean distance to reference centroids.',
                    style={'fontSize': '11px', 'color': '#a0aec0', 'marginTop': '4px'}),
         ], className='verdict-box')
     else:
@@ -531,12 +485,10 @@ def update_summary(tulip_id):
                    f'(d_PD={d_pd:.2f}, d_H={d_healthy:.2f})'),
         ], className='verdict-box')
 
-    scores = per_feature
-
     # Key findings
+    scores = per_feature
     finding_items = []
     for feat, score in scores.items():
-        from src.figures import FEATURE_LABELS
         label = FEATURE_LABELS.get(feat, feat)
         if score > 65:
             finding_items.append(
@@ -561,16 +513,16 @@ def update_summary(tulip_id):
                     className='finding-healthy'))
 
     findings = html.Div([
-        html.H3('주요 소견', className='viz-title'),
+        html.H3('주요 소견 (Aligned Tasks)', className='viz-title'),
         html.Ul(finding_items, className='findings-list'),
     ])
 
     # Radar
     fig_radar = make_summary_radar(feature_cache, group_stats, tulip_id)
 
-    # Task table
+    # Task table — aligned tasks only
     task_rows = []
-    for task in SENSOR_TASKS:
+    for task in MATCHING_TASKS:
         td = subj[subj.task == task]
         lv = td[td.wrist == 'L']['amplitude'].values
         rv = td[td.wrist == 'R']['amplitude'].values
@@ -578,18 +530,36 @@ def update_summary(tulip_id):
         r_amp = f'{rv[0]:.4f}' if len(rv) > 0 else '—'
         asym = calc_asymmetry_index(lv[0], rv[0]) if (len(lv) > 0 and len(rv) > 0) else 0
         asym_class = 'high-asym' if asym > 0.3 else ''
+
+        # Additional: tremor power
+        l_tp = td[td.wrist == 'L']['tremor_power'].values
+        r_tp = td[td.wrist == 'R']['tremor_power'].values
+        l_tremor = f'{l_tp[0]:.5f}' if len(l_tp) > 0 else '—'
+        r_tremor = f'{r_tp[0]:.5f}' if len(r_tp) > 0 else '—'
+
+        # Rhythm irregularity
+        l_ri = td[td.wrist == 'L']['rhythm_irreg'].values
+        r_ri = td[td.wrist == 'R']['rhythm_irreg'].values
+        l_rhythm = f'{l_ri[0]:.3f}' if len(l_ri) > 0 else '—'
+        r_rhythm = f'{r_ri[0]:.3f}' if len(r_ri) > 0 else '—'
+
         task_rows.append(html.Tr([
             html.Td(TASK_LABELS_KR.get(task, task)),
-            html.Td(l_amp),
-            html.Td(r_amp),
+            html.Td(l_amp), html.Td(r_amp),
+            html.Td(l_tremor), html.Td(r_tremor),
+            html.Td(l_rhythm), html.Td(r_rhythm),
             html.Td(f'{asym:.3f}', className=asym_class),
         ]))
 
     task_table = html.Div([
-        html.H3('Task별 요약', className='viz-title'),
+        html.H3('Aligned Task 상세 요약', className='viz-title'),
         html.Table([
             html.Thead(html.Tr([
-                html.Th('Task'), html.Th('Left Amp'), html.Th('Right Amp'), html.Th('Asymmetry'),
+                html.Th('Task'),
+                html.Th('L Amp'), html.Th('R Amp'),
+                html.Th('L Tremor'), html.Th('R Tremor'),
+                html.Th('L Rhythm CV'), html.Th('R Rhythm CV'),
+                html.Th('Asymmetry'),
             ])),
             html.Tbody(task_rows),
         ], className='summary-table'),
@@ -598,7 +568,7 @@ def update_summary(tulip_id):
     return verdict, findings, fig_radar, task_table
 
 
-# ─── Tab 5: Video — dynamic video type options per patient ───
+# ─── Tab 3: Video — dynamic video type options per patient ───
 @app.callback(
     Output('video-type-dropdown', 'options'),
     Output('video-type-dropdown', 'value'),
@@ -666,32 +636,14 @@ def update_video(tulip_id, video_type, camera):
                       'display': 'inline-block', 'fontWeight': '600'}),
     ])
 
-    # Task-aware analysis from videos_feature CSV (minimal layout change)
+    # Task-aware analysis from videos_feature CSV
     task_folder = VIDEO_TASK_FOLDER_MAP.get(video_type)
     primary_df = load_video_feature_df(tulip_id, task_folder, camera) if task_folder else None
-
-    counterpart_df = None  # kept for signature compatibility
+    counterpart_df = None
 
     if primary_df is None or primary_df.empty:
-        # [PRE] Legacy fallback block (video_analysis.json) is intentionally kept.
-        # [PRE] We keep this code path as comment only to satisfy no-deletion policy.
-        # side = 'L' if video_type == 'toe_left' else 'R'
-        # legacy = video_data.get(tulip_id, {}).get(side)
-        # if legacy:
-        #     legacy_player = html.P(
-        #         'videos_feature CSV가 없어서 legacy JSON 분석 결과를 표시합니다.',
-        #         style={'color': '#718096', 'padding': '12px'},
-        #     )
-        #     legacy_timeline = make_motion_timeline(video_data[tulip_id], side)
-        #     legacy_lr = make_lr_tapping_comparison(
-        #         video_data[tulip_id].get('L', {}),
-        #         video_data[tulip_id].get('R', {}),
-        #     )
-        #     return legacy_player, legacy_timeline, legacy_lr, '—', '—', '—', '—'
-        # [END PRE]
         msg = html.P(
-            '선택한 task/camera에 대한 videos_feature CSV가 없습니다. '
-            'extract_metrabs_joint_features.py 배치를 먼저 실행해주세요.',
+            '선택한 task/camera에 대한 videos_feature CSV가 없습니다.',
             style={'color': '#718096', 'padding': '20px'},
         )
         return (
@@ -779,5 +731,4 @@ def export_json(n_clicks, store):
 # ══════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
-    # Keep debug on, but disable hot-reload watcher to avoid missing legacy asset path errors.
     app.run(debug=True, dev_tools_hot_reload=False, port=8050)

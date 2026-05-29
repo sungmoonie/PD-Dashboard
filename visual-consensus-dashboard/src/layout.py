@@ -1,8 +1,16 @@
-"""Dashboard layout — Hybrid: Tabs + Decision Workspace + Group Comparison."""
+"""Dashboard layout — Final: Aligned Tasks (Toe Tapping & Resting) Focus.
+
+5 Tabs:
+1. Patient Overview — demographics + NMS + aligned task matrix
+2. Tremor & Rhythm — tremor power, frequency bands, spectral, rhythm, decrement
+3. Video Analysis — multi-camera toe tapping & resting video
+4. Reference Comparison — proximity gauge + distribution position
+5. Clinical Summary — verdict, findings, radar, task table
+"""
 
 from dash import html, dcc
 from src.data_loader import (
-    get_subject_list_hybrid, get_task_list, SENSOR_TASKS, NEW_CASES
+    get_subject_list_hybrid, get_task_list, NEW_CASES
 )
 
 
@@ -19,7 +27,6 @@ def _card(card_id, label, initial='—', label_id=None):
 
 def create_layout():
     """Build the full dashboard layout."""
-    task_options = get_task_list()
     case_options = get_subject_list_hybrid()
 
     return html.Div([
@@ -30,7 +37,7 @@ def create_layout():
         html.Header([
             html.Div([
                 html.H1('PD Clinical Decision Support', className='header-title'),
-                html.P('스마트워치 센서 + 멀티카메라 영상 기반 · Movement Interpretation 보조 시스템',
+                html.P('Aligned Tasks: Toe Tapping (Entrainment) & Resting (Relaxed) 중심 분석',
                        className='header-subtitle'),
             ], className='header-left'),
             html.Div([
@@ -55,23 +62,19 @@ def create_layout():
                 dcc.Tabs(id='main-tabs', value='tab-overview', className='custom-tabs', children=[
                     dcc.Tab(label='1. Patient Overview', value='tab-overview',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='2. Motor Landscape', value='tab-landscape',
+                    dcc.Tab(label='2. Tremor & Rhythm', value='tab-tremor',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='3. Group Comparison', value='tab-comparison',
+                    dcc.Tab(label='3. Video Analysis', value='tab-video',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='4. Bilateral Asymmetry', value='tab-asymmetry',
+                    dcc.Tab(label='4. Reference Comparison', value='tab-comparison',
                             className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='5. Sensor Analysis', value='tab-sensor',
-                            className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='6. Video Analysis', value='tab-video',
-                            className='custom-tab', selected_className='custom-tab--selected'),
-                    dcc.Tab(label='7. Clinical Summary', value='tab-summary',
+                    dcc.Tab(label='5. Clinical Summary', value='tab-summary',
                             className='custom-tab', selected_className='custom-tab--selected'),
                 ]),
                 html.Div(id='tab-content', className='tab-content-area'),
             ], className='main-content'),
 
-            # ═══ RIGHT: Decision Workspace (for new patients) ═══
+            # ═══ RIGHT: Decision Workspace ═══
             html.Aside(id='right-panel', children=[
                 html.H3('Decision Workspace', className='panel-title'),
                 html.Div(id='new-patient-indicator', className='new-indicator'),
@@ -86,7 +89,7 @@ def create_layout():
 
                 html.Hr(className='sidebar-divider'),
 
-                # Decision form (for new patients)
+                # Decision form
                 html.Div([
                     html.H4('Your Assessment', className='section-title'),
                     html.Label('Classification:', className='form-label'),
@@ -154,7 +157,7 @@ def create_layout():
 # ══════════════════════════════════════════════════════════════
 
 def build_tab_overview():
-    """Tab 1: Patient Overview — demographics + NMS."""
+    """Tab 1: Patient Overview — demographics + NMS + aligned task matrix."""
     return html.Div([
         # Demographics
         html.Div(id='demographics-row', className='demographics-row'),
@@ -171,185 +174,96 @@ def build_tab_overview():
             html.H3('Non-Motor Symptoms', className='viz-title'),
             html.Div(id='nms-content', className='nms-grid'),
         ], className='viz-block'),
-        # Bilateral Matrix (quick overview)
+        # Bilateral Matrix (aligned tasks only)
         html.Div([
-            html.H3('Task-Symptom Matrix (Sensor Overview)', className='viz-title'),
+            html.H3('Aligned Task Matrix (Entrainment & Relaxed)', className='viz-title'),
+            html.P('Toe Tapping(Entrainment) & Resting(Relaxed) 센서 데이터의 '
+                   '좌/우 4개 feature(Tremor, Amplitude, Rhythm, Jerk) 정규화 비교.',
+                   className='tab-description'),
             dcc.Graph(id='bilateral-matrix', config={'displayModeBar': False}),
         ], className='viz-block'),
     ])
 
 
-def build_tab_comparison():
-    """Tab 2: Group Comparison — selected patient vs confirmed PD/Healthy."""
+def build_tab_tremor():
+    """Tab 2: Tremor & Rhythm Analysis — aligned tasks focus."""
     task_options = get_task_list()
     return html.Div([
         html.Div([
-            html.H3('Motor Phenotype Proximity — Reference Cohort Comparison', className='viz-title'),
-            html.P('이 환자의 matched sensor analog가 확정 PD/Healthy reference cohort와 '
-                   '얼마나 유사한 motor phenotype을 보이는지 비교합니다. '
-                   '진단 확률이 아닌 reference 유사도입니다.',
+            html.H3('Tremor & Rhythm Analysis', className='viz-title'),
+            html.P('Aligned tasks (Entrainment = Toe Tapping 센서, Relaxed = Resting 센서)의 '
+                   '떨림 power, 주파수 대역, 리듬 안정성, 진폭 감소를 분석합니다.',
                    className='tab-description'),
         ]),
-        # ── Patient-level (no task selection needed) ──
+        # ── Tremor Power Overview (both tasks, no selector needed) ──
         html.Div([
-            dcc.Graph(id='proximity-gauge', config={'displayModeBar': False}),
-        ], className='viz-block'),
-        html.Div([
-            dcc.Graph(id='feature-group-comparison', config={'displayModeBar': False}),
-        ], className='viz-block'),
-        html.Div([
-            dcc.Graph(id='task-profile-comparison', config={'displayModeBar': False}),
+            html.H3('Tremor Power (4-12Hz) — L/R with Reference', className='viz-title'),
+            html.P('환자의 좌/우 tremor power를 PD/Healthy 그룹 평균과 비교합니다. '
+                   'PD 환자는 일반적으로 tremor power가 높습니다.',
+                   className='tab-description'),
+            dcc.Graph(id='tremor-power-bars', config={'displayModeBar': False}),
         ], className='viz-block'),
 
-        # ── Task-specific (task selector here) ──
-        html.Div([
-            html.Label('Task (아래 차트에 적용):', className='inline-label'),
-            dcc.Dropdown(id='comp-task-dropdown', options=task_options,
-                         value='Entrainment', clearable=False, className='inline-dropdown'),
-            html.Label('Metric:', className='inline-label'),
-            dcc.Dropdown(id='comp-metric-dropdown', options=[
-                {'label': 'Accel RMS', 'value': 'accel_rms'},
-                {'label': 'Gyro RMS', 'value': 'gyro_rms'},
-                {'label': 'Accel Std', 'value': 'accel_std'},
-                {'label': 'Gyro Std', 'value': 'gyro_std'},
-            ], value='accel_rms', clearable=False, className='inline-dropdown'),
-        ], className='controls-row'),
-        html.Div([
-            dcc.Graph(id='new-vs-group-box', config={'displayModeBar': False}),
-        ], className='viz-block'),
-        html.Div([
-            dcc.Graph(id='asymmetry-scatter', config={'displayModeBar': False}),
-        ], className='viz-block'),
-    ])
-
-
-def build_tab_sensor():
-    """Tab 3: Sensor Analysis — Spectral + Rhythm + Evidence Ribbon."""
-    task_options = get_task_list()
-    return html.Div([
-        # Task selector
+        # ── Task-specific analysis ──
         html.Div([
             html.Label('Task:', className='inline-label'),
-            dcc.Dropdown(id='sensor-task-dropdown', options=task_options,
+            dcc.Dropdown(id='tremor-task-dropdown', options=task_options,
                          value='Entrainment', clearable=False, className='inline-dropdown'),
         ], className='controls-row'),
+
+        # Tremor Band Breakdown
+        html.Div([
+            html.H3('Tremor Frequency Band Analysis', className='viz-title'),
+            html.P('Rest tremor (4-6Hz): PD 안정시 떨림의 특징적 주파수 대역. '
+                   'Action tremor (6-12Hz): 동작 중 떨림. '
+                   'Rest-dominant → PD 시사.',
+                   className='tab-description'),
+            dcc.Graph(id='tremor-band-chart', config={'displayModeBar': False}),
+        ], className='viz-block'),
+
         # Spectral Fingerprint
         html.Div([
             html.H3('Bilateral Spectral Fingerprint', className='viz-title'),
-            dcc.Graph(id='spectral-fingerprint', config={'displayModeBar': False}),
+            html.P('좌/우 손목 센서의 시간-주파수 분석. '
+                   '4-12Hz 대역(빨간 영역)에 지속적 power가 있으면 tremor 존재를 시사.',
+                   className='tab-description'),
+            dcc.Graph(id='tremor-spectral', config={'displayModeBar': False}),
         ], className='viz-block'),
+
         # Rhythm Ladder
         html.Div([
             html.H3('Rhythm Instability Ladder', className='viz-title'),
-            dcc.Graph(id='rhythm-ladder', config={'displayModeBar': False}),
+            html.P('반복 운동의 peak 감지 및 inter-peak interval CV. '
+                   'CV가 높을수록 리듬이 불규칙하여 bradykinesia를 시사.',
+                   className='tab-description'),
+            dcc.Graph(id='tremor-rhythm', config={'displayModeBar': False}),
         ], className='viz-block'),
-        # Evidence Ribbon
+
+        # Amplitude Decrement
         html.Div([
-            html.H3('Evidence Ribbon (All Tasks)', className='viz-title'),
-            dcc.Graph(id='evidence-ribbon', config={'displayModeBar': False}),
+            html.H3('Amplitude Decrement Analysis', className='viz-title'),
+            html.P('반복 운동 시 시간에 따른 진폭 변화. '
+                   '진폭이 점진적으로 감소(declining slope)하면 '
+                   'PD bradykinesia의 핵심 지표인 decrement sequence를 시사.',
+                   className='tab-description'),
+            dcc.Graph(id='tremor-decrement', config={'displayModeBar': False}),
         ], className='viz-block'),
+
         # Raw sensor (collapsible)
         html.Details([
-            html.Summary('Raw 6-Axis Timeseries', className='raw-toggle'),
-            dcc.Graph(id='raw-timeseries-left', config={'displayModeBar': False}),
-            dcc.Graph(id='raw-timeseries-right', config={'displayModeBar': False}),
+            html.Summary('Raw 6-Axis Timeseries (접기/펼치기)', className='raw-toggle'),
+            dcc.Graph(id='tremor-raw-left', config={'displayModeBar': False}),
+            dcc.Graph(id='tremor-raw-right', config={'displayModeBar': False}),
         ], className='raw-sensor-section'),
     ])
 
 
-def build_tab_asymmetry():
-    """Tab 3: Bilateral Asymmetry — PD core feature analysis."""
-    task_options = get_task_list()
-    return html.Div([
-        html.Div([
-            html.H3('좌우 비대칭 분석 (Bilateral Asymmetry)', className='viz-title'),
-            html.P('PD의 핵심 특징: 편측성(laterality). '
-                   '좌우 손목 센서 차이가 클수록 PD 가능성 시사.',
-                   className='tab-description'),
-        ]),
-        # ── Patient-level (no task selection) ──
-        html.Div([
-            dcc.Graph(id='asymmetry-heatmap', config={'displayModeBar': False}),
-        ], className='viz-block'),
-        html.Div([
-            html.H3('비대칭 지수 — 그룹 비교', className='viz-title'),
-            dcc.Graph(id='asym-group-compare', config={'displayModeBar': False}),
-        ], className='viz-block'),
-
-        # ── Task-specific (task selector) ──
-        html.Div([
-            html.Label('Task (아래 차트에 적용):', className='inline-label'),
-            dcc.Dropdown(id='asym-task-dropdown', options=task_options,
-                         value='Entrainment', clearable=False, className='inline-dropdown'),
-        ], className='controls-row'),
-        html.Div([
-            html.H3('좌/우 Waveform 비교', className='viz-title'),
-            dcc.Graph(id='asym-waveform', config={'displayModeBar': False}),
-        ], className='viz-block'),
-        html.Div([
-            html.H3('좌/우 Feature 비교', className='viz-title'),
-            dcc.Graph(id='asym-feature-bars', config={'displayModeBar': False}),
-        ], className='viz-block'),
-    ])
-
-
-def build_tab_summary():
-    """Tab 6: Clinical Summary — all evidence compiled."""
-    return html.Div([
-        html.Div([
-            html.H3('Clinical Summary Report', className='viz-title'),
-            html.P('이 환자에 대한 모든 센서 분석 결과를 종합합니다.',
-                   className='tab-description'),
-        ]),
-        # Overall verdict
-        html.Div(id='summary-verdict', className='viz-block'),
-        # Key findings
-        html.Div(id='summary-findings', className='viz-block'),
-        # Feature radar
-        html.Div([
-            dcc.Graph(id='summary-radar', config={'displayModeBar': False}),
-        ], className='viz-block'),
-        # Task-by-task breakdown table
-        html.Div(id='summary-task-table', className='viz-block'),
-    ])
-
-
-def build_tab_landscape():
-    """Tab 2: Clinical Motor Event Landscape."""
-    task_options = get_task_list()
-    return html.Div([
-        html.Div([
-            html.H3('Clinical Motor Event Landscape', className='viz-title'),
-            html.P('연속 센서 데이터를 임상적으로 의미 있는 movement event layer로 변환합니다. '
-                   'raw waveform이 아닌 movement pathology topology를 시각화합니다.',
-                   className='tab-description'),
-        ]),
-        # Task selector (landscape is task-specific)
-        html.Div([
-            html.Label('Task:', className='inline-label'),
-            dcc.Dropdown(id='landscape-task-dropdown', options=task_options,
-                         value='Entrainment', clearable=False, className='inline-dropdown'),
-        ], className='controls-row'),
-        # Main landscape
-        html.Div([
-            dcc.Graph(id='motor-landscape', config={'displayModeBar': False}),
-        ], className='viz-block'),
-        # Bilateral Phase Space
-        html.Div([
-            html.H3('Bilateral Phase Space', className='viz-title'),
-            html.P('좌/우 motor energy 궤적. 대각선=대칭, 이탈=편측성.',
-                   className='tab-description'),
-            dcc.Graph(id='bilateral-phase-space', config={'displayModeBar': False}),
-        ], className='viz-block'),
-    ])
-
-
 def build_tab_video():
-    """Tab 6: Video Analysis — patient-specific videos from R2 CDN."""
+    """Tab 3: Video Analysis — multi-camera toe tapping & resting video."""
     return html.Div([
         html.P(
-            '* 각주: Tab 6 영상은 Cloudflare R2 CDN 링크를 사용합니다. '
-            '로컬 파일이 없으면 개발 환경에서 재생 확인이 제한될 수 있습니다.',
+            '* Cloudflare R2 CDN 영상: Toe Tapping (좌/우) & Resting Tremor. '
+            '영상 기반 motion feature 분석 결과를 제공합니다.',
             className='tab-description',
             style={'marginBottom': '8px'},
         ),
@@ -390,10 +304,70 @@ def build_tab_video():
                 dcc.Graph(id='lr-tapping-comparison', config={'displayModeBar': False}),
             ], className='video-right'),
         ], className='video-split-layout'),
-        # Clinical-focused extra visualizations (keeps existing charts intact)
+        # Clinical-focused extra visualizations
         html.Div([
             dcc.Graph(id='video-interval-distribution', config={'displayModeBar': False}),
             dcc.Graph(id='video-tremor-spectrogram', config={'displayModeBar': False}),
             dcc.Graph(id='video-symmetry-trend', config={'displayModeBar': False}),
         ], className='video-right'),
+    ])
+
+
+def build_tab_comparison():
+    """Tab 4: Reference Comparison — proximity + distribution (aligned tasks only)."""
+    task_options = get_task_list()
+    return html.Div([
+        html.Div([
+            html.H3('Motor Phenotype Proximity — Reference Cohort', className='viz-title'),
+            html.P('Aligned tasks (Entrainment & Relaxed) 기반 16D weighted Euclidean proximity. '
+                   '이 점수는 진단 확률이 아닌, 확정 PD/Healthy reference cohort에 대한 '
+                   'motor phenotype 유사도입니다.',
+                   className='tab-description'),
+        ]),
+        # Proximity Gauge
+        html.Div([
+            dcc.Graph(id='proximity-gauge', config={'displayModeBar': False}),
+        ], className='viz-block'),
+
+        # Task-specific distribution
+        html.Div([
+            html.Label('Task:', className='inline-label'),
+            dcc.Dropdown(id='comp-task-dropdown', options=task_options,
+                         value='Entrainment', clearable=False, className='inline-dropdown'),
+            html.Label('Metric:', className='inline-label'),
+            dcc.Dropdown(id='comp-metric-dropdown', options=[
+                {'label': 'Accel RMS', 'value': 'accel_rms'},
+                {'label': 'Gyro RMS', 'value': 'gyro_rms'},
+                {'label': 'Accel Std', 'value': 'accel_std'},
+                {'label': 'Gyro Std', 'value': 'gyro_std'},
+            ], value='accel_rms', clearable=False, className='inline-dropdown'),
+        ], className='controls-row'),
+        html.Div([
+            html.H3('Reference Distribution Position', className='viz-title'),
+            html.P('선택한 task/metric에서 이 환자가 PD/Healthy 분포 어디에 위치하는지 보여줍니다.',
+                   className='tab-description'),
+            dcc.Graph(id='new-vs-group-box', config={'displayModeBar': False}),
+        ], className='viz-block'),
+    ])
+
+
+def build_tab_summary():
+    """Tab 5: Clinical Summary — aligned tasks evidence compiled."""
+    return html.Div([
+        html.Div([
+            html.H3('Clinical Summary Report', className='viz-title'),
+            html.P('Aligned tasks (Entrainment & Relaxed) 센서 분석 결과를 종합합니다. '
+                   'Tremor power, amplitude, rhythm, jerk, asymmetry를 통합 평가합니다.',
+                   className='tab-description'),
+        ]),
+        # Overall verdict
+        html.Div(id='summary-verdict', className='viz-block'),
+        # Key findings
+        html.Div(id='summary-findings', className='viz-block'),
+        # Feature radar
+        html.Div([
+            dcc.Graph(id='summary-radar', config={'displayModeBar': False}),
+        ], className='viz-block'),
+        # Task-by-task breakdown table
+        html.Div(id='summary-task-table', className='viz-block'),
     ])

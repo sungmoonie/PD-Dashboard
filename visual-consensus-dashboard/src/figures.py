@@ -1366,8 +1366,8 @@ FEATURE_LABELS = {
 }
 
 
-def make_bilateral_matrix(feature_df, tulip_id):
-    """Task-Symptom Bilateral Matrix: 11 tasks × 8 cols (4 features × L/R).
+def make_bilateral_matrix(feature_df, tulip_id, tasks=None):
+    """Task-Symptom Bilateral Matrix: tasks × 8 cols (4 features × L/R).
 
     Parameters
     ----------
@@ -1375,15 +1375,18 @@ def make_bilateral_matrix(feature_df, tulip_id):
         From build_feature_cache().
     tulip_id : str
         Selected subject.
+    tasks : list or None
+        Task list to display. Defaults to MATCHING_TASKS (aligned tasks only).
     """
-    from src.data_loader import SENSOR_TASKS, TASK_LABELS_KR
+    from src.data_loader import MATCHING_TASKS, TASK_LABELS_KR
 
     subj = feature_df[feature_df.tulip_id == tulip_id].copy()
     if subj.empty:
         return _empty_fig('Feature data 없음')
 
     features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
-    tasks = SENSOR_TASKS
+    if tasks is None:
+        tasks = MATCHING_TASKS
 
     # Build matrix: tasks × (L_feat1, R_feat1, L_feat2, R_feat2, ...)
     col_labels = []
@@ -1424,12 +1427,12 @@ def make_bilateral_matrix(feature_df, tulip_id):
         colorbar=dict(title='Normalized', thickness=12),
     ))
     fig.update_layout(
-        title=dict(text='Task-Symptom Bilateral Matrix (Matched Sensor Analog)',
+        title=dict(text='Aligned Task Bilateral Matrix (Entrainment & Relaxed)',
                    font=dict(size=13)),
         xaxis=dict(tickangle=-45, tickfont=dict(size=9), side='bottom'),
         yaxis=dict(tickfont=dict(size=10), autorange='reversed'),
     )
-    return _apply_defaults(fig, height=max(400, len(tasks) * 35 + 100))
+    return _apply_defaults(fig, height=max(300, len(tasks) * 50 + 100))
 
 
 def make_spectral_fingerprint(tulip_id, task, load_ts_fn=None):
@@ -2370,13 +2373,15 @@ def make_asym_group_compare(group_stats_df, tulip_id):
 # ══════════════════════════════════════════════════════════════
 
 def make_summary_radar(feature_df, group_stats_df, tulip_id):
-    """Radar chart: normalized feature profile vs reference cohorts."""
-    from src.data_loader import SENSOR_TASKS
+    """Radar chart: normalized feature profile vs reference cohorts (aligned tasks only)."""
+    from src.data_loader import MATCHING_TASKS
     from src.feature_engineering import calc_asymmetry_index
     if not tulip_id:
         return _empty_fig('Select a patient')
     group_map = group_stats_df[['tulip_id', 'group']].drop_duplicates()
-    merged = feature_df.merge(group_map, on='tulip_id', how='left')
+    # Filter to aligned tasks only
+    aligned_fc = feature_df[feature_df.task.isin(MATCHING_TASKS)]
+    merged = aligned_fc.merge(group_map, on='tulip_id', how='left')
     dimensions = ['Tremor Power', 'Amplitude', 'Rhythm Irreg.', 'Mean Jerk', 'Asymmetry']
     features = ['tremor_power', 'amplitude', 'rhythm_irreg', 'jerk']
     patient_scores, healthy_scores, pd_scores = [], [], []
@@ -2392,7 +2397,7 @@ def make_summary_radar(feature_df, group_stats_df, tulip_id):
         pd_scores.append(norm(p_mean))
     subj_data = feature_df[feature_df.tulip_id == tulip_id]
     asym_vals = []
-    for task in SENSOR_TASKS:
+    for task in MATCHING_TASKS:
         td = subj_data[subj_data.task == task]
         lv = td[td.wrist == 'L']['amplitude'].values
         rv = td[td.wrist == 'R']['amplitude'].values
@@ -2416,8 +2421,228 @@ def make_summary_radar(feature_df, group_stats_df, tulip_id):
                                    name=f'★ {_display_id(tulip_id)}'))
     fig.update_layout(
         polar=dict(radialaxis=dict(visible=True, range=[0, 1], gridcolor='#edf2f7')),
-        title=dict(text=f'Motor Phenotype Radar — {tulip_id}', font=dict(size=14)),
+        title=dict(text=f'Motor Phenotype Radar — {tulip_id} (Aligned Tasks)', font=dict(size=14)),
         legend=dict(orientation='h', y=-0.1), height=420,
         font=dict(family='-apple-system, Segoe UI, sans-serif', size=12, color='#2c3e50'),
     )
     return fig
+
+
+# ══════════════════════════════════════════════════════════════
+#  TREMOR & RHYTHM ANALYSIS — Aligned Tasks Focus
+# ══════════════════════════════════════════════════════════════
+
+def make_tremor_power_bars(feature_df, group_stats_df, tulip_id):
+    """Tremor power (4-12Hz) L/R comparison for aligned tasks with PD/Healthy reference."""
+    from src.data_loader import MATCHING_TASKS, TASK_LABELS_KR
+
+    subj = feature_df[feature_df.tulip_id == tulip_id]
+    if subj.empty:
+        return _empty_fig('Feature data 없음')
+
+    group_map = group_stats_df[['tulip_id', 'group']].drop_duplicates()
+    merged = feature_df.merge(group_map, on='tulip_id', how='left')
+
+    n_tasks = len(MATCHING_TASKS)
+    fig = make_subplots(
+        rows=1, cols=n_tasks,
+        subplot_titles=[TASK_LABELS_KR.get(t, t) for t in MATCHING_TASKS],
+        horizontal_spacing=0.15,
+    )
+
+    for col_i, task in enumerate(MATCHING_TASKS, 1):
+        td = subj[subj.task == task]
+        l_val = td[td.wrist == 'L']['tremor_power'].values
+        r_val = td[td.wrist == 'R']['tremor_power'].values
+        l_tp = float(l_val[0]) if len(l_val) > 0 else 0
+        r_tp = float(r_val[0]) if len(r_val) > 0 else 0
+
+        ref = merged[merged.task == task]
+        h_mean = ref[ref.group == 'Healthy']['tremor_power'].mean() if not ref[ref.group == 'Healthy'].empty else 0
+        p_mean = ref[ref.group == 'PD']['tremor_power'].mean() if not ref[ref.group == 'PD'].empty else 0
+
+        fig.add_trace(go.Bar(
+            x=['Left', 'Right'], y=[l_tp, r_tp],
+            marker=dict(color=['#4299e1', '#fc8181']),
+            name='Patient' if col_i == 1 else None,
+            showlegend=(col_i == 1), legendgroup='patient',
+            text=[f'{l_tp:.5f}', f'{r_tp:.5f}'],
+            textposition='outside', textfont=dict(size=9),
+            hovertemplate='%{x}: %{y:.6f}<extra></extra>',
+        ), row=1, col=col_i)
+
+        fig.add_hline(y=p_mean, line_dash='dash', line_color='#e53e3e',
+                      annotation_text=f'PD avg',
+                      annotation_font=dict(size=9, color='#e53e3e'),
+                      row=1, col=col_i)
+        fig.add_hline(y=h_mean, line_dash='dot', line_color='#38a169',
+                      annotation_text=f'Healthy avg',
+                      annotation_font=dict(size=9, color='#38a169'),
+                      row=1, col=col_i)
+
+    fig.update_layout(
+        title=dict(text=f'Tremor Power (4-12Hz) — Aligned Tasks L/R ({_display_id(tulip_id)})',
+                   font=dict(size=14)),
+        legend=dict(orientation='h', y=-0.15),
+    )
+    fig.update_yaxes(title_text='Tremor Power', gridcolor='#edf2f7', row=1, col=1)
+    return _apply_defaults(fig, height=400)
+
+
+def make_tremor_band_breakdown(tulip_id, task):
+    """Frequency band breakdown: rest tremor (4-6Hz) vs action tremor (6-12Hz) L/R."""
+    from src.data_loader import load_timeseries, _estimate_fs, TASK_LABELS_KR
+
+    categories = []
+    rest_band = []
+    action_band = []
+    total_band = []
+
+    for wrist, label in [('LeftWrist', 'Left'), ('RightWrist', 'Right')]:
+        ts = load_timeseries(tulip_id, task, wrist)
+        if ts.empty:
+            categories.append(label)
+            rest_band.append(0)
+            action_band.append(0)
+            total_band.append(0)
+            continue
+
+        sig = ts['accel_mag'].values
+        fs = _estimate_fs(ts)
+
+        sig_dc = sig - np.mean(sig)
+        n = len(sig_dc)
+        if n < 16:
+            categories.append(label)
+            rest_band.append(0)
+            action_band.append(0)
+            total_band.append(0)
+            continue
+
+        fft_vals = np.abs(np.fft.rfft(sig_dc)) ** 2 / (n * fs)
+        freqs = np.fft.rfftfreq(n, d=1.0 / fs)
+        df = freqs[1] - freqs[0] if len(freqs) > 1 else 1.0
+
+        rest_mask = (freqs >= 4.0) & (freqs <= 6.0)
+        action_mask = (freqs > 6.0) & (freqs <= 12.0)
+
+        r_power = float(np.sum(fft_vals[rest_mask]) * df)
+        a_power = float(np.sum(fft_vals[action_mask]) * df)
+
+        categories.append(label)
+        rest_band.append(r_power)
+        action_band.append(a_power)
+        total_band.append(r_power + a_power)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=categories, y=rest_band, name='Rest Tremor Band (4-6 Hz)',
+        marker=dict(color='#e53e3e', opacity=0.85),
+        text=[f'{v:.6f}' for v in rest_band], textposition='outside',
+        textfont=dict(size=9),
+    ))
+    fig.add_trace(go.Bar(
+        x=categories, y=action_band, name='Action Tremor Band (6-12 Hz)',
+        marker=dict(color='#dd6b20', opacity=0.85),
+        text=[f'{v:.6f}' for v in action_band], textposition='outside',
+        textfont=dict(size=9),
+    ))
+
+    # Ratio annotation
+    for i, cat in enumerate(categories):
+        total = total_band[i]
+        if total > 0:
+            ratio = rest_band[i] / total * 100
+            interpretation = 'Rest-dominant (PD-like)' if ratio > 60 else (
+                'Action-dominant' if ratio < 40 else 'Mixed')
+            fig.add_annotation(
+                x=cat, y=max(rest_band[i], action_band[i]) * 1.15,
+                text=f'Rest: {ratio:.0f}%<br><i style="font-size:9px">{interpretation}</i>',
+                showarrow=False, font=dict(size=10),
+            )
+
+    task_label = TASK_LABELS_KR.get(task, task)
+    fig.update_layout(
+        title=dict(text=f'Tremor Frequency Band — {task_label} ({_display_id(tulip_id)})',
+                   font=dict(size=14)),
+        barmode='group',
+        yaxis=dict(title='Band Power', gridcolor='#edf2f7'),
+        legend=dict(orientation='h', y=-0.15),
+    )
+    return _apply_defaults(fig, height=400)
+
+
+def make_amplitude_decrement(tulip_id, task):
+    """Amplitude decrement analysis: progressive decay detection for bradykinesia.
+
+    Declining amplitude during repetitive movement (Entrainment) is a
+    hallmark sign of PD bradykinesia / decrement sequence.
+    """
+    from src.data_loader import load_timeseries, _estimate_fs, TASK_LABELS_KR
+
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=['Left Wrist', 'Right Wrist'],
+        horizontal_spacing=0.12,
+    )
+
+    for col_i, (wrist, color) in enumerate([('LeftWrist', '#4299e1'), ('RightWrist', '#fc8181')], 1):
+        ts = load_timeseries(tulip_id, task, wrist)
+        if ts.empty:
+            continue
+        sig = ts['accel_mag'].values
+        fs = _estimate_fs(ts)
+
+        win_sec = 2.0
+        win = int(win_sec * fs)
+        hop = win // 2
+        n_frames = max(1, (len(sig) - win) // hop + 1)
+        times = np.zeros(n_frames)
+        amplitudes = np.zeros(n_frames)
+
+        for i in range(n_frames):
+            start = i * hop
+            end = min(start + win, len(sig))
+            frame = sig[start:end]
+            times[i] = (start + end) / 2 / fs
+            amplitudes[i] = np.sqrt(np.mean(frame ** 2))
+
+        fig.add_trace(go.Scatter(
+            x=times, y=amplitudes, mode='lines+markers',
+            line=dict(color=color, width=2),
+            marker=dict(size=4, color=color),
+            name=wrist.replace('Wrist', ''),
+            hovertemplate='Time: %{x:.1f}s<br>RMS: %{y:.4f} g<extra></extra>',
+        ), row=1, col=col_i)
+
+        if len(times) > 2:
+            z = np.polyfit(times, amplitudes, 1)
+            trend = np.polyval(z, times)
+            slope_color = '#e53e3e' if z[0] < -0.001 else '#38a169'
+            slope_text = 'Declining (decrement)' if z[0] < -0.001 else 'Stable/Increasing'
+            fig.add_trace(go.Scatter(
+                x=times, y=trend, mode='lines',
+                line=dict(color=slope_color, width=2, dash='dash'),
+                showlegend=False,
+                hovertemplate=f'Trend: {z[0]:.5f} g/s<br>{slope_text}<extra></extra>',
+            ), row=1, col=col_i)
+
+            fig.add_annotation(
+                x=0.5, y=0.95,
+                xref=f'x{col_i} domain' if col_i > 1 else 'x domain',
+                yref=f'y{col_i} domain' if col_i > 1 else 'y domain',
+                text=f'Slope: {z[0]:.5f} g/s<br><b>{slope_text}</b>',
+                showarrow=False, font=dict(size=10, color=slope_color),
+                bgcolor='rgba(255,255,255,0.85)', bordercolor=slope_color,
+                borderwidth=1, borderpad=4,
+            )
+
+    task_label = TASK_LABELS_KR.get(task, task)
+    fig.update_layout(
+        title=dict(text=f'Amplitude Decrement — {task_label} ({_display_id(tulip_id)})',
+                   font=dict(size=14)),
+        legend=dict(orientation='h', y=-0.12),
+    )
+    fig.update_yaxes(title_text='RMS Amplitude (g)', gridcolor='#edf2f7')
+    fig.update_xaxes(title_text='Time (s)', gridcolor='#edf2f7')
+    return _apply_defaults(fig, height=400)
