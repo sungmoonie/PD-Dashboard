@@ -412,6 +412,15 @@ def build_tab_comparison():
             dcc.Graph(id='proximity-gauge', config={'displayModeBar': False}),
         ], className='viz-block'),
 
+        # PCA 2D Feature Space Map
+        html.Div([
+            html.H3('Motor Feature Space — PCA 2D Projection', className='viz-title'),
+            html.P('16D motor feature vector를 2D로 축소하여 PD/Healthy centroid 대비 '
+                   '환자 위치를 보여줍니다. 어떤 feature가 proximity를 drive하는지 확인할 수 있습니다.',
+                   className='tab-description'),
+            dcc.Graph(id='proximity-map', config={'displayModeBar': False}),
+        ], className='viz-block'),
+
         # Task-specific distribution
         html.Div([
             html.Label('Task:', className='inline-label'),

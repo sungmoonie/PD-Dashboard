@@ -31,7 +31,7 @@ from src.figures import (
     make_bilateral_matrix, make_spectral_fingerprint,
     make_rhythm_ladder,
     make_new_vs_group_box,
-    make_proximity_gauge,
+    make_proximity_gauge, make_proximity_map,
     make_summary_radar,
     make_tremor_power_bars, make_tremor_band_breakdown, make_amplitude_decrement,
     make_asym_feature_bars, make_asym_group_compare,
@@ -422,6 +422,17 @@ def update_comparison_patient(tulip_id):
     if not tulip_id:
         return _empty_fig()
     return make_proximity_gauge(group_stats, feature_cache, tulip_id)
+
+
+# ─── Tab 4: Reference Comparison — PCA 2D Map ───
+@app.callback(
+    Output('proximity-map', 'figure'),
+    Input('patient-dropdown', 'value'),
+)
+def update_proximity_map(tulip_id):
+    if not tulip_id:
+        return _empty_fig()
+    return make_proximity_map(tulip_id)
 
 
 # ─── Tab 4: Reference Comparison — auto-select metric by task ───

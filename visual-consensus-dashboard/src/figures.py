@@ -1860,6 +1860,140 @@ def make_proximity_gauge(group_stats_df, feature_df, highlight_tulip=None):
     return fig
 
 
+def make_proximity_map(tulip_id):
+    """Motor Feature Space — PCA 2D projection of 16D z-score vectors.
+
+    Shows where the current patient sits relative to PD/Healthy reference
+    cohort in a dimensionality-reduced feature space. Annotates top driving
+    features based on PCA loadings.
+    """
+    if not tulip_id:
+        return _empty_fig('Select a patient')
+
+    from src.data_loader import compute_proximity_2d, compute_proximity_scores
+
+    pca = compute_proximity_2d()
+    if not pca:
+        return _empty_fig('PCA computation unavailable')
+
+    tids = pca['tids']
+    groups = pca['groups']
+    coords = pca['coords']
+    pd_c = pca['pd_centroid_2d']
+    h_c = pca['healthy_centroid_2d']
+    var_exp = pca['var_explained']
+    labels = pca['vector_labels']
+    loadings = pca['loadings']
+
+    # Highlight index
+    if tulip_id not in tids:
+        return _empty_fig('Patient not in proximity data')
+    hi = tids.index(tulip_id)
+
+    fig = go.Figure()
+
+    # ── Reference patients ──
+    for grp, color, sym, name in [
+        ('PD', '#e53e3e', 'circle', 'PD'),
+        ('Healthy', '#38a169', 'circle', 'Healthy'),
+    ]:
+        idx = [i for i, g in enumerate(groups) if g == grp and i != hi]
+        if not idx:
+            continue
+        fig.add_trace(go.Scatter(
+            x=coords[idx, 0], y=coords[idx, 1],
+            mode='markers+text',
+            marker=dict(size=10, color=color, opacity=0.6, symbol=sym,
+                        line=dict(width=1, color='white')),
+            text=[_display_id(tids[i]) for i in idx],
+            textposition='top center', textfont=dict(size=8, color=color),
+            name=name,
+            hovertemplate='<b>%{text}</b><br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<extra></extra>',
+        ))
+
+    # ── Centroids ──
+    fig.add_trace(go.Scatter(
+        x=[pd_c[0]], y=[pd_c[1]], mode='markers',
+        marker=dict(size=16, color='#e53e3e', symbol='triangle-up',
+                    line=dict(width=2, color='white')),
+        name='PD Centroid',
+        hovertemplate='<b>PD Centroid</b><br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<extra></extra>',
+    ))
+    fig.add_trace(go.Scatter(
+        x=[h_c[0]], y=[h_c[1]], mode='markers',
+        marker=dict(size=16, color='#38a169', symbol='square',
+                    line=dict(width=2, color='white')),
+        name='Healthy Centroid',
+        hovertemplate='<b>Healthy Centroid</b><br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<extra></extra>',
+    ))
+
+    # ── Current patient (star) ──
+    prox_data = compute_proximity_scores()
+    pat_prox = prox_data.get(tulip_id, {})
+    score = pat_prox.get('score', 50.0)
+    d_pd = pat_prox.get('d_pd', 0)
+    d_h = pat_prox.get('d_healthy', 0)
+
+    fig.add_trace(go.Scatter(
+        x=[coords[hi, 0]], y=[coords[hi, 1]], mode='markers+text',
+        marker=dict(size=20, color='#805ad5', symbol='star',
+                    line=dict(width=2, color='white')),
+        text=[_display_id(tulip_id)],
+        textposition='bottom center', textfont=dict(size=11, color='#805ad5', weight='bold'),
+        name=f'★ {_display_id(tulip_id)}',
+        hovertemplate=(
+            f'<b>★ {_display_id(tulip_id)}</b><br>'
+            f'PC1: %{{x:.2f}}<br>PC2: %{{y:.2f}}<br><br>'
+            f'Proximity: {score:.1f}%<br>'
+            f'd(PD)={d_pd:.2f}, d(Healthy)={d_h:.2f}'
+            f'<extra></extra>'
+        ),
+    ))
+
+    # ── Dashed lines from patient to centroids ──
+    fig.add_trace(go.Scatter(
+        x=[coords[hi, 0], pd_c[0]], y=[coords[hi, 1], pd_c[1]],
+        mode='lines', line=dict(color='#e53e3e', width=1, dash='dot'),
+        showlegend=False, hoverinfo='skip',
+    ))
+    fig.add_trace(go.Scatter(
+        x=[coords[hi, 0], h_c[0]], y=[coords[hi, 1], h_c[1]],
+        mode='lines', line=dict(color='#38a169', width=1, dash='dot'),
+        showlegend=False, hoverinfo='skip',
+    ))
+
+    # ── Top driving features annotation (top 3 by loading magnitude) ──
+    loading_mag = np.sqrt(loadings[:, 0]**2 + loadings[:, 1]**2)
+    top_idx = np.argsort(loading_mag)[-3:][::-1]
+    top_labels = []
+    for i in top_idx:
+        parts = labels[i].split('_')  # e.g. Entrainment_L_tremor_power
+        feat = '_'.join(parts[2:])
+        feat_short = FEATURE_LABELS.get(feat, feat)
+        top_labels.append(f'{parts[0][:3]}.{parts[1]} {feat_short}')
+
+    annotation_text = 'Top drivers: ' + ', '.join(top_labels)
+
+    fig.update_layout(
+        **LAYOUT_DEFAULTS,
+        height=420,
+        title=dict(
+            text=(f'<b>Motor Feature Space — PCA 2D Projection</b><br>'
+                  f'<span style="font-size:11px;color:#718096">'
+                  f'PC1 {var_exp[0]*100:.1f}% + PC2 {var_exp[1]*100:.1f}% = '
+                  f'{(var_exp[0]+var_exp[1])*100:.1f}% variance explained | '
+                  f'{annotation_text}</span>'),
+            font=dict(size=13),
+        ),
+        xaxis=dict(title=f'PC1 ({var_exp[0]*100:.1f}%)', gridcolor='#edf2f7',
+                   zeroline=True, zerolinecolor='#e2e8f0'),
+        yaxis=dict(title=f'PC2 ({var_exp[1]*100:.1f}%)', gridcolor='#edf2f7',
+                   zeroline=True, zerolinecolor='#e2e8f0'),
+        legend=dict(orientation='h', yanchor='bottom', y=-0.25, xanchor='center', x=0.5),
+    )
+    return fig
+
+
 def make_new_vs_group_box(group_stats_df, task, metric='accel_rms', highlight_tulip=None):
     """Distribution position with percentile interpretation (Revision 8).
 

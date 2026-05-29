@@ -592,6 +592,100 @@ def compute_proximity_scores():
 
 
 @lru_cache(maxsize=1)
+def compute_proximity_2d():
+    """Project the 16D z-score motor feature vectors onto 2D via PCA (numpy SVD).
+
+    Reuses the same pipeline as compute_proximity_scores():
+      MATCHING_TASKS × ['L','R'] × MATCHING_FEATURES → 16D vector → z-score.
+
+    Returns dict with keys:
+        tids, groups, coords (N×2), pd_centroid_2d, healthy_centroid_2d,
+        var_explained (2,), vector_labels (16,), loadings (16×2).
+    Returns empty dict if data is insufficient.
+    """
+    fc = build_feature_cache()
+    patients = load_patients()
+    cond_map = dict(zip(patients['tulip_id'], patients['condition']))
+
+    match_data = fc[fc.task.isin(MATCHING_TASKS)].copy()
+    if match_data.empty:
+        return {}
+
+    # Build 16D vectors (identical to compute_proximity_scores)
+    vector_labels = []
+    for task in MATCHING_TASKS:
+        for wrist in ['L', 'R']:
+            for feat in MATCHING_FEATURES:
+                vector_labels.append(f'{task}_{wrist}_{feat}')
+
+    subject_vectors = {}
+    for tulip_id in match_data['tulip_id'].unique():
+        subj = match_data[match_data.tulip_id == tulip_id]
+        vec = []
+        for task in MATCHING_TASKS:
+            task_data = subj[subj.task == task]
+            for wrist in ['L', 'R']:
+                wrist_data = task_data[task_data.wrist == wrist]
+                for feat in MATCHING_FEATURES:
+                    vals = wrist_data[feat].values
+                    vec.append(float(vals[0]) if len(vals) > 0 else 0.0)
+        subject_vectors[tulip_id] = np.array(vec)
+
+    if not subject_vectors:
+        return {}
+
+    # Separate confirmed groups
+    pd_vecs, healthy_vecs = [], []
+    for tid, vec in subject_vectors.items():
+        group = get_group_label(tid, cond_map.get(tid, 'Unknown'))
+        if group == 'PD':
+            pd_vecs.append(vec)
+        elif group == 'Healthy':
+            healthy_vecs.append(vec)
+
+    if len(pd_vecs) == 0 or len(healthy_vecs) == 0:
+        return {}
+
+    # Z-normalize using confirmed subjects
+    all_confirmed = np.vstack([pd_vecs, healthy_vecs])
+    mean_vec = np.mean(all_confirmed, axis=0)
+    std_vec = np.std(all_confirmed, axis=0)
+    std_vec[std_vec == 0] = 1.0
+
+    # Z-score all subjects
+    tids = list(subject_vectors.keys())
+    groups = [get_group_label(t, cond_map.get(t, 'Unknown')) for t in tids]
+    Z = np.array([(subject_vectors[t] - mean_vec) / std_vec for t in tids])
+
+    # PCA via SVD (center Z first)
+    Z_mean = Z.mean(axis=0)
+    Zc = Z - Z_mean
+    U, S, Vt = np.linalg.svd(Zc, full_matrices=False)
+    coords = Zc @ Vt[:2].T  # N×2
+    loadings = Vt[:2].T     # 16×2
+
+    total_var = np.sum(S ** 2)
+    var_explained = (S[:2] ** 2) / total_var if total_var > 0 else np.array([0, 0])
+
+    # Centroids in 2D
+    pd_idx = [i for i, g in enumerate(groups) if g == 'PD']
+    h_idx = [i for i, g in enumerate(groups) if g == 'Healthy']
+    pd_centroid_2d = coords[pd_idx].mean(axis=0)
+    healthy_centroid_2d = coords[h_idx].mean(axis=0)
+
+    return {
+        'tids': tids,
+        'groups': groups,
+        'coords': coords,
+        'pd_centroid_2d': pd_centroid_2d,
+        'healthy_centroid_2d': healthy_centroid_2d,
+        'var_explained': var_explained,
+        'vector_labels': vector_labels,
+        'loadings': loadings,
+    }
+
+
+@lru_cache(maxsize=1)
 def build_group_stats():
     """Precompute per-subject per-task sensor RMS stats for group comparison.
 
